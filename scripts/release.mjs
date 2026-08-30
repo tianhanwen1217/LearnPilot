@@ -68,9 +68,10 @@ try {
   writeFileSync(resolve(root, `release/LearnPilot-${version}.zip`), zipSync(filesForZip(resolve(root, "dist")), { level: 9 }));
   git("add", "package.json", "package-lock.json", "public/manifest.json");
   git("commit", "-m", `release: LearnPilot v${version}`);
-  git("tag", `v${version}`);
+  git("tag", "-a", `v${version}`, "-m", `LearnPilot v${version}`);
   const branch = git("branch", "--show-current") || "main";
-  execFileSync("git", ["push", "--follow-tags", "origin", branch], { cwd: root, stdio: "inherit" });
+  execFileSync("git", ["push", "origin", branch], { cwd: root, stdio: "inherit" });
+  execFileSync("git", ["push", "origin", `v${version}`], { cwd: root, stdio: "inherit" });
   console.log(`LearnPilot v${version} 已推送到 ${remote}`);
 } catch (error) {
   console.error(`发布未完成：${error instanceof Error ? error.message : String(error)}`);
