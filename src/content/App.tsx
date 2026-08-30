@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { courseSessionKey } from "../shared/defaults";
 import { getSettings, saveSettings } from "../shared/storage";
-import type { AnalysisResult, CourseSessionState, ExtractedQuestion, MessageResponse, RuntimeMessage, VideoProgress } from "../shared/types";
+import type { AnalysisResult, CourseSessionState, DetectedTaskState, ExtractedQuestion, MessageResponse, RuntimeMessage, TabAutomationState, VideoProgress } from "../shared/types";
 import { applySuggestedOptions, clickNextQuestion, detectCourseId, extractCurrentQuestion, hasFinalSubmit } from "./question";
 import { advanceToNextLesson, initializePlaybackFrame } from "./playback";
 import { clampLauncherPosition, launcherMovementExceeded, snapLauncherPosition, type LauncherPoint } from "./launcher";
 import { clampPanelOpacity, clampPanelPosition, clampPanelScale } from "./panel";
-import { advanceTextTask, isLikelyCoursePage, pageHasBlockingPrompt, pageHasTextTask, pageShowsTaskCompleted, selectPageTask, type PageTaskKind } from "./task";
+import { isLikelyCoursePage, pageHasBlockingPrompt, pageHasTextTask, pageShowsTaskCompleted, selectPageTask, type PageTaskKind } from "./task";
 
 const LAUNCHER_POSITION_KEY = "learnpilot.launcherPosition";
 const PANEL_DISPLAY_KEY = "learnpilot.panelDisplay";
@@ -58,6 +58,7 @@ export function App() {
   const [playbackRate, setPlaybackRateState] = useState(1);
   const [jumpMode, setJumpMode] = useState<"next" | "stay">("stay");
   const [autoAnswer, setAutoAnswer] = useState(false);
+  const [assistantPaused, setAssistantPaused] = useState(false);
   const [launcherPosition, setLauncherPosition] = useState(() => ({ x: Math.max(24, window.innerWidth - LAUNCHER_EDGE_OFFSET), y: window.innerHeight / 2 }));
   const [launcherDragging, setLauncherDragging] = useState(false);
   const [launcherLaunching, setLauncherLaunching] = useState(false);
@@ -70,12 +71,13 @@ export function App() {
   const busyRef = useRef(false);
   const autoLoopRef = useRef(false);
   const pausedReasonRef = useRef("");
+  const assistantPausedRef = useRef(false);
   const jumpModeRef = useRef<"next" | "stay">("stay");
   const taskKindRef = useRef<PageTaskKind>("idle");
   const videoSignalRef = useRef<{ progress: VideoProgress; receivedAt: number } | null>(null);
+  const remoteTaskRef = useRef<{ state: DetectedTaskState; message: string; frameId: number; receivedAt: number } | null>(null);
   const lastTaskUrlRef = useRef(location.href);
   const lastAdvanceAtRef = useRef(0);
-  const lastTextScrollAtRef = useRef(0);
   const launcherTimerRef = useRef<number | null>(null);
   const launcherPositionRef = useRef<LauncherPoint>(launcherPosition);
   const launcherTouchedRef = useRef(false);
@@ -122,6 +124,7 @@ export function App() {
     setAutoAnswer(false);
     const current = await loadCourseState(courseId);
     await saveCourseState({ ...current, autoRunning: false });
+    await chrome.runtime.sendMessage({ type: "SET_TAB_AUTOMATION", state: { autoAnswer: false, paused: assistantPausedRef.current } } satisfies RuntimeMessage).catch(() => undefined);
     setStatus(message);
   }, [courseId]);
 
@@ -146,17 +149,18 @@ export function App() {
   }, []);
 
   const runAutoLoop = useCallback(async () => {
-    if (!autoRef.current || autoLoopRef.current) return;
+    if (!autoRef.current || assistantPausedRef.current || autoLoopRef.current) return;
     autoLoopRef.current = true;
     try {
-      while (autoRef.current) {
+      while (autoRef.current && !assistantPausedRef.current) {
         if (pageHasBlockingPrompt()) {
           await stopAuto("检测到签到、登录或验证，已暂停");
           return;
         }
         if (!extractCurrentQuestion(false)) return;
         const analyzed = await analyzeCurrentQuestion();
-        if (!analyzed || !autoRef.current) {
+        if (!analyzed || !autoRef.current || assistantPausedRef.current) {
+          if (assistantPausedRef.current) return;
           await stopAuto("题目分析失败，已停止");
           return;
         }
@@ -176,7 +180,7 @@ export function App() {
         }
         setStatus(`已勾选 ${analyzed.result.suggestedOptions.join("、")}，准备下一题`);
         await new Promise((resolve) => window.setTimeout(resolve, settings.autoNextDelayMs));
-        if (!autoRef.current) return;
+        if (!autoRef.current || assistantPausedRef.current) return;
         if (pageHasBlockingPrompt()) {
           await stopAuto("检测到签到、登录或验证，已暂停");
           return;
@@ -210,18 +214,27 @@ export function App() {
     setAutoAnswer(true);
     const current = await loadCourseState(courseId);
     await saveCourseState({ ...current, testMode: true, autoRunning: true });
+    await chrome.runtime.sendMessage({ type: "SET_TAB_AUTOMATION", state: { autoAnswer: true, paused: assistantPausedRef.current } } satisfies RuntimeMessage);
     setStatus("自动答题已开启");
   }, [courseId, stopAuto]);
 
   useEffect(() => {
-    void Promise.all([initializePlaybackFrame(), getSettings(), loadCourseState(courseId)]).then(([playback, settings, state]) => {
+    void Promise.all([
+      initializePlaybackFrame(),
+      getSettings(),
+      loadCourseState(courseId),
+      chrome.runtime.sendMessage({ type: "GET_TAB_AUTOMATION" } satisfies RuntimeMessage) as Promise<MessageResponse<TabAutomationState>>,
+    ]).then(([playback, settings, state, automationResponse]) => {
       const mode = playback ? "next" : "stay";
       jumpModeRef.current = mode;
       setJumpMode(mode);
       setPlaybackRateState(settings.playbackRate);
-      const enabled = state.testMode && state.autoRunning;
+      const automation = automationResponse.ok && automationResponse.data ? automationResponse.data : { autoAnswer: state.testMode && state.autoRunning, paused: false };
+      const enabled = automation.autoAnswer;
       autoRef.current = enabled;
       setAutoAnswer(enabled);
+      assistantPausedRef.current = automation.paused;
+      setAssistantPaused(automation.paused);
     });
 
     const listener = (message: RuntimeMessage, _sender: chrome.runtime.MessageSender, sendResponse: (response: MessageResponse) => void) => {
@@ -233,7 +246,21 @@ export function App() {
       }
       if (message.type === "PLAYBACK_RATE_CHANGED") setPlaybackRateState(message.rate);
       if (message.type === "PLAYBACK_PROGRESS") videoSignalRef.current = { progress: message.progress, receivedAt: Date.now() };
-      if (message.type === "GET_PAGE_ASSIST_STATUS") sendResponse({ ok: true, data: { testMode: autoRef.current, autoRunning: autoRef.current } });
+      if (message.type === "AUTOMATION_STATE_CHANGED") {
+        autoRef.current = message.state.autoAnswer;
+        setAutoAnswer(message.state.autoAnswer);
+        assistantPausedRef.current = message.state.paused;
+        setAssistantPaused(message.state.paused);
+        setStatus(message.state.paused ? "助手已暂停" : "助手已继续，正在识别课程内容…");
+      }
+      if (message.type === "PAGE_TASK_STATE") {
+        const current = remoteTaskRef.current;
+        if (message.state !== "idle" || !current || current.state === "idle" || Date.now() - current.receivedAt > 5000) {
+          remoteTaskRef.current = { state: message.state, message: message.message, frameId: message.frameId, receivedAt: Date.now() };
+        }
+      }
+      if (message.type === "PAGE_AUTO_STOPPED") void stopAuto(message.reason);
+      if (message.type === "GET_PAGE_ASSIST_STATUS") sendResponse({ ok: true, data: { testMode: autoRef.current, autoRunning: autoRef.current, paused: assistantPausedRef.current } });
       if (message.type === "SET_TEST_ASSIST") {
         void setAutoAssist(message.enabled).then(() => sendResponse({ ok: true })).catch((error) => {
           sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
@@ -253,6 +280,10 @@ export function App() {
       if (disposed || inspecting) return;
       inspecting = true;
       try {
+        if (assistantPausedRef.current) {
+          setStatus("助手已暂停");
+          return;
+        }
         if (location.href !== lastTaskUrlRef.current) {
           lastTaskUrlRef.current = location.href;
           videoSignalRef.current = null;
@@ -262,13 +293,21 @@ export function App() {
           ? videoSignalRef.current.progress
           : undefined;
         const coursePage = isLikelyCoursePage();
-        const task = selectPageTask({
+        let task = selectPageTask({
           blocked: pageHasBlockingPrompt(),
           question: Boolean(extractCurrentQuestion(false)),
           completed: coursePage && pageShowsTaskCompleted(),
           text: coursePage && pageHasTextTask(),
           video: recentVideo,
         });
+        const remote = remoteTaskRef.current && Date.now() - remoteTaskRef.current.receivedAt < 6000 && remoteTaskRef.current.state !== "idle"
+          ? remoteTaskRef.current
+          : null;
+        let remoteSelected = false;
+        if (remote && (task === "idle" || task === "text" || remote.state === "blocked" || remote.state === "question" || remote.state.startsWith("video_"))) {
+          task = remote.state;
+          remoteSelected = true;
+        }
         taskKindRef.current = task;
 
         if (task === "blocked") {
@@ -277,6 +316,10 @@ export function App() {
           return;
         }
         if (task === "question") {
+          if (remoteSelected && remote && remote.frameId !== 0) {
+            setStatus(remote.message);
+            return;
+          }
           if (autoRef.current) {
             setStatus(busyRef.current || autoLoopRef.current ? "题目处理中…" : "已识别题目，准备自动处理");
             void runAutoLoop();
@@ -286,7 +329,7 @@ export function App() {
           return;
         }
         if (task === "video_playing") {
-          setStatus(`视频播放中 · ${recentVideo?.playbackRate ?? playbackRate}×`);
+          setStatus(remoteSelected && remote ? remote.message : `视频播放中 · ${recentVideo?.playbackRate ?? playbackRate}×`);
           return;
         }
         if (task === "video_paused") {
@@ -307,18 +350,10 @@ export function App() {
           return;
         }
         if (task === "text") {
-          if (jumpModeRef.current === "next") {
-            if (Date.now() - lastTextScrollAtRef.current > 1600) {
-              lastTextScrollAtRef.current = Date.now();
-              const result = advanceTextTask();
-              setStatus(result === "bottom" ? "文本内容已浏览，等待页面确认完成" : "文本任务处理中…");
-            }
-          } else {
-            setStatus("已识别文本任务");
-          }
+          setStatus(remoteSelected && remote ? remote.message : (jumpModeRef.current === "next" ? "文本任务处理中…" : "已识别文本任务"));
           return;
         }
-        setStatus("正在等待课程任务…");
+        setStatus("未识别到任务；请打开视频、文本或作业页");
       } finally {
         inspecting = false;
       }
@@ -329,7 +364,7 @@ export function App() {
       disposed = true;
       window.clearInterval(timer);
     };
-  }, [autoAnswer, playbackRate, runAutoLoop, stopAuto]);
+  }, [assistantPaused, autoAnswer, playbackRate, runAutoLoop, stopAuto]);
 
   useEffect(() => {
     void chrome.storage.local.get(LAUNCHER_POSITION_KEY).then((stored) => {
@@ -404,6 +439,24 @@ export function App() {
   const updateAutoAnswer = async (enabled: boolean) => {
     setBusy(true);
     try { await setAutoAssist(enabled); } finally { setBusy(false); }
+  };
+
+  const toggleAssistantPaused = async () => {
+    const next = !assistantPausedRef.current;
+    assistantPausedRef.current = next;
+    setAssistantPaused(next);
+    setBusy(true);
+    try {
+      const response = await chrome.runtime.sendMessage({ type: "SET_TAB_AUTOMATION", state: { autoAnswer: autoRef.current, paused: next } } satisfies RuntimeMessage) as MessageResponse<TabAutomationState>;
+      if (!response.ok) throw new Error(response.error || "无法切换助手状态");
+      setStatus(next ? "助手已暂停" : "助手已继续，正在识别课程内容…");
+    } catch (error) {
+      assistantPausedRef.current = !next;
+      setAssistantPaused(!next);
+      setStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const updatePanelOpacity = (value: number) => {
@@ -524,7 +577,7 @@ export function App() {
     style={{ left: panelPosition.x, top: panelPosition.y, opacity: panelOpacity, transform: `scale(${panelScale})`, maxHeight: `${Math.max(240, (window.innerHeight - 32) / panelScale)}px` }}
   >
     <header className="panel-header" title="拖动此处移动面板" onPointerDown={beginPanelDrag} onPointerMove={movePanel} onPointerUp={finishPanelDrag} onPointerCancel={cancelPanelDrag} onLostPointerCapture={cancelPanelDrag}>
-      <div className="brand"><img src={iconUrl} alt="" /><div><strong>LearnPilot</strong><small>{status}</small></div></div>
+      <div className="brand"><img src={iconUrl} alt="" /><div><strong>LearnPilot</strong><small title={status}>{status}</small></div></div>
       <div className="header-actions"><button type="button" onClick={() => setDisplayMenuOpen((value) => !value)}>显示</button><button type="button" onClick={() => chrome.runtime.openOptionsPage()}>API 设置</button><button type="button" className="close-button" onClick={() => setOpen(false)} aria-label="收起">×</button></div>
       {displayMenuOpen && <div className="display-menu" onPointerDown={(event) => event.stopPropagation()}>
         <label><span>透明度 <b>{Math.round(panelOpacity * 100)}%</b></span><input type="range" min="45" max="100" step="5" value={Math.round(panelOpacity * 100)} onChange={(event) => updatePanelOpacity(Number(event.target.value) / 100)} /></label>
@@ -536,6 +589,7 @@ export function App() {
       <label><span>跳转模式</span><select disabled={busy} value={jumpMode} onChange={(event) => void updateJumpMode(event.target.value as "next" | "stay")}><option value="next">完成后自动跳到下一节</option><option value="stay">播放完成后停留</option></select></label>
       <label><span>自动答题</span><select disabled={busy} value={autoAnswer ? "on" : "off"} onChange={(event) => void updateAutoAnswer(event.target.value === "on")}><option value="on">是</option><option value="off">否</option></select></label>
     </section>
+    <button type="button" className={`assistant-toggle${assistantPaused ? " paused" : ""}`} disabled={busy} onClick={() => void toggleAssistantPaused()}>{assistantPaused ? "继续" : "暂停"}</button>
     <section className="instructions"><strong>操作说明</strong><ul><li>当前版本用于受支持的网页端在线课程，不处理电子书、随堂测验、下载文件或讨论课程。</li><li>手动进入视频或作业页面后，助手会自动连接当前页面。</li><li>视频正常播放完成后才会按跳转模式进入下一节。</li><li>自动答题会按设置的置信度勾选并翻题，最终提交仍由你点击。</li></ul></section>
   </aside>;
 }

@@ -87,6 +87,11 @@ button:disabled, select:disabled { cursor: default; opacity: .55; }
 .controls label > span { color: #5f6367; font-size: 12px; font-weight: 600; }
 select { width: 100%; min-height: 52px; padding: 8px 30px 8px 12px; border: 0; border-left: 1px solid #eee8df; border-radius: 0 11px 11px 0; outline: none; color: #2f3336; background: var(--lp-surface); font-size: 12px; cursor: pointer; }
 
+.assistant-toggle { display: block; width: calc(100% - 28px); min-height: 42px; margin: 0 14px 12px; border-color: #667fa8; color: #fff; background: #667fa8; font-size: 13px; font-weight: 650; }
+.assistant-toggle:hover { border-color: #5f769d; background: #5f769d; }
+.assistant-toggle.paused { border-color: #c5b7a5; color: #5e5850; background: #f3eee5; }
+.assistant-toggle.paused:hover { border-color: #b9aa97; background: #ebe3d7; }
+
 .instructions { margin: 0 14px 14px; padding: 14px 15px; border: 1px solid #ebe4d9; border-radius: 12px; background: #f8f5ef; }
 .instructions strong { color: #343638; font-size: 13px; }
 .instructions ul { margin: 9px 0 0; padding-left: 18px; color: #6f7377; font-size: 11px; line-height: 1.7; }

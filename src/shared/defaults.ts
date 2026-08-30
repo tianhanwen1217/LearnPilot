@@ -25,6 +25,10 @@ export function tabPlaybackKey(tabId: number): string {
   return `studyCompanion.playback.${tabId}`;
 }
 
+export function tabAutomationKey(tabId: number): string {
+  return `studyCompanion.automation.${tabId}`;
+}
+
 export function courseSessionKey(courseId: string): string {
   return `studyCompanion.course.${courseId}`;
 }

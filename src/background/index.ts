@@ -1,9 +1,20 @@
 import { analyzeQuestion, testConnection } from "./analysis";
 import { clearAllExtensionData, getSettings, saveSettings } from "../shared/storage";
-import { courseSessionKey, tabPlaybackKey } from "../shared/defaults";
-import type { MessageResponse, RuntimeMessage } from "../shared/types";
+import { courseSessionKey, tabAutomationKey, tabPlaybackKey } from "../shared/defaults";
+import type { MessageResponse, RuntimeMessage, TabAutomationState } from "../shared/types";
 
 const lastAdvanceAt = new Map<number, number>();
+
+async function getTabAutomation(tabId: number): Promise<TabAutomationState> {
+  const key = tabAutomationKey(tabId);
+  const stored = (await chrome.storage.session.get(key))[key] as TabAutomationState | undefined;
+  return stored ?? { autoAnswer: false, paused: false };
+}
+
+async function setTabAutomation(tabId: number, state: TabAutomationState): Promise<void> {
+  await chrome.storage.session.set({ [tabAutomationKey(tabId)]: state });
+  await chrome.tabs.sendMessage(tabId, { type: "AUTOMATION_STATE_CHANGED", state } satisfies RuntimeMessage).catch(() => undefined);
+}
 
 chrome.storage.session.setAccessLevel({ accessLevel: "TRUSTED_AND_UNTRUSTED_CONTEXTS" }).catch(() => undefined);
 
@@ -31,7 +42,8 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
           if (tabId == null) throw new Error("无法识别当前标签页。");
           const state = await chrome.storage.session.get(tabPlaybackKey(tabId));
           const now = Date.now();
-          if (state[tabPlaybackKey(tabId)] === true && now - (lastAdvanceAt.get(tabId) ?? 0) > 3000) {
+          const automation = await getTabAutomation(tabId);
+          if (state[tabPlaybackKey(tabId)] === true && !automation.paused && now - (lastAdvanceAt.get(tabId) ?? 0) > 3000) {
             lastAdvanceAt.set(tabId, now);
             const key = courseSessionKey(message.courseId);
             const session = await chrome.storage.session.get(key);
@@ -93,8 +105,40 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
         case "SET_ACTIVE_TEST_ASSIST": {
           const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
           if (!tab.id) throw new Error("未找到活动标签页。");
-          const result = await chrome.tabs.sendMessage(tab.id, { type: "SET_TEST_ASSIST", enabled: message.enabled } satisfies RuntimeMessage, { frameId: 0 });
+          const automation = await getTabAutomation(tab.id);
+          await setTabAutomation(tab.id, { ...automation, autoAnswer: message.enabled });
+          const result = await chrome.tabs.sendMessage(tab.id, { type: "SET_TEST_ASSIST", enabled: message.enabled } satisfies RuntimeMessage, { frameId: 0 }).catch(() => ({ ok: true }));
           sendResponse(result as MessageResponse);
+          return;
+        }
+        case "GET_TAB_AUTOMATION": {
+          const tabId = sender.tab?.id;
+          if (tabId == null) throw new Error("无法识别当前标签页。");
+          sendResponse({ ok: true, data: await getTabAutomation(tabId) });
+          return;
+        }
+        case "SET_TAB_AUTOMATION": {
+          const tabId = sender.tab?.id;
+          if (tabId == null) throw new Error("无法识别当前标签页。");
+          await setTabAutomation(tabId, message.state);
+          sendResponse({ ok: true, data: message.state });
+          return;
+        }
+        case "FRAME_TASK_STATE": {
+          const tabId = sender.tab?.id;
+          if (tabId != null) {
+            await chrome.tabs.sendMessage(tabId, { type: "PAGE_TASK_STATE", state: message.state, message: message.message, frameId: sender.frameId ?? 0 } satisfies RuntimeMessage, { frameId: 0 }).catch(() => undefined);
+          }
+          sendResponse({ ok: true });
+          return;
+        }
+        case "FRAME_AUTO_STOPPED": {
+          const tabId = sender.tab?.id;
+          if (tabId == null) throw new Error("无法识别当前标签页。");
+          const automation = await getTabAutomation(tabId);
+          await setTabAutomation(tabId, { ...automation, autoAnswer: false });
+          await chrome.tabs.sendMessage(tabId, { type: "PAGE_AUTO_STOPPED", reason: message.reason } satisfies RuntimeMessage, { frameId: 0 }).catch(() => undefined);
+          sendResponse({ ok: true });
           return;
         }
         case "GET_ACTIVE_STATUS": {
@@ -102,8 +146,8 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
           if (!tab.id) throw new Error("未找到活动标签页。");
           const playback = (await chrome.storage.session.get(tabPlaybackKey(tab.id)))[tabPlaybackKey(tab.id)] === true;
           const settings = await getSettings();
-          const assist = await chrome.tabs.sendMessage(tab.id, { type: "GET_PAGE_ASSIST_STATUS" } satisfies RuntimeMessage, { frameId: 0 }).catch(() => null) as MessageResponse<{ testMode: boolean; autoRunning: boolean }> | null;
-          sendResponse({ ok: true, data: { tabId: tab.id, url: tab.url, playback, playbackRate: settings.playbackRate, assist: assist?.ok ? assist.data : undefined } });
+          const automation = await getTabAutomation(tab.id);
+          sendResponse({ ok: true, data: { tabId: tab.id, url: tab.url, playback, playbackRate: settings.playbackRate, assist: { testMode: automation.autoAnswer, autoRunning: automation.autoAnswer, paused: automation.paused } } });
           return;
         }
         case "CLEAR_SESSION": {
@@ -123,5 +167,5 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   lastAdvanceAt.delete(tabId);
-  chrome.storage.session.remove(tabPlaybackKey(tabId)).catch(() => undefined);
+  chrome.storage.session.remove([tabPlaybackKey(tabId), tabAutomationKey(tabId)]).catch(() => undefined);
 });

@@ -7,7 +7,7 @@ type ActiveStatus = {
   url?: string;
   playback: boolean;
   playbackRate: number;
-  assist?: { testMode: boolean; autoRunning: boolean };
+  assist?: { testMode: boolean; autoRunning: boolean; paused?: boolean };
 };
 
 function Popup() {
@@ -27,7 +27,7 @@ function Popup() {
       setPlaybackRate(response.data?.playbackRate ?? 1);
       setJumpMode(response.data?.playback ? "next" : "stay");
       setAutoAnswer(response.data?.assist?.autoRunning === true);
-      setStatus(valid ? (response.data?.assist ? "已连接到当前课程页面" : "已连接；刷新页面即可加载助手") : "请打开课程页面后使用");
+      setStatus(valid ? (response.data?.assist?.paused ? "助手已暂停" : response.data?.assist ? "已连接到当前课程页面" : "已连接；刷新页面即可加载助手") : "请打开课程页面后使用");
     });
   }, []);
 

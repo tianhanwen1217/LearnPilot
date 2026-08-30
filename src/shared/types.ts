@@ -86,6 +86,13 @@ export interface VideoProgress {
   paused: boolean;
 }
 
+export type DetectedTaskState = "blocked" | "question" | "video_playing" | "video_paused" | "video_complete" | "completed" | "text" | "idle";
+
+export interface TabAutomationState {
+  autoAnswer: boolean;
+  paused: boolean;
+}
+
 export type RuntimeMessage =
   | { type: "ANALYZE_QUESTION"; question: ExtractedQuestion; bankMatch?: BankMatch }
   | { type: "TEST_CONNECTION"; settings: ExtensionSettings }
@@ -104,6 +111,13 @@ export type RuntimeMessage =
   | { type: "SET_ACTIVE_PLAYBACK_RATE"; rate: number }
   | { type: "SET_ACTIVE_TEST_ASSIST"; enabled: boolean }
   | { type: "SET_TEST_ASSIST"; enabled: boolean }
+  | { type: "GET_TAB_AUTOMATION" }
+  | { type: "SET_TAB_AUTOMATION"; state: TabAutomationState }
+  | { type: "AUTOMATION_STATE_CHANGED"; state: TabAutomationState }
+  | { type: "FRAME_TASK_STATE"; state: DetectedTaskState; message: string }
+  | { type: "PAGE_TASK_STATE"; state: DetectedTaskState; message: string; frameId: number }
+  | { type: "FRAME_AUTO_STOPPED"; reason: string }
+  | { type: "PAGE_AUTO_STOPPED"; reason: string }
   | { type: "GET_PAGE_ASSIST_STATUS" }
   | { type: "GET_ACTIVE_STATUS" }
   | { type: "CLEAR_SESSION" };
