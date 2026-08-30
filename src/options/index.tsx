@@ -71,7 +71,7 @@ function Options() {
           <label><span>密钥保存方式</span><select value={settings.apiKeyStorage} onChange={(event) => update("apiKeyStorage", event.target.value as ExtensionSettings["apiKeyStorage"])}><option value="session">仅当前浏览器会话</option><option value="local">保存在本机浏览器</option></select></label>
           <NumberField label="请求超时" value={Math.round(settings.requestTimeoutMs / 1000)} min={10} max={120} suffix="秒" onChange={(value) => update("requestTimeoutMs", value * 1000)} />
         </div>
-        <p className="note">浏览器扩展无法对本机保存的密钥提供硬件级保护。使用共享电脑时请选择“仅当前会话”。框选搜题还要求该模型支持图片输入。</p>
+        <p className="note">浏览器扩展无法对本机保存的密钥提供硬件级保护。使用共享电脑时请选择“仅当前会话”。</p>
       </section>
 
       <section>

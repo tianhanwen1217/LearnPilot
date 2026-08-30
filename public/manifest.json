@@ -2,10 +2,9 @@
   "manifest_version": 3,
   "name": "LearnPilot",
   "version": "0.4.0",
-  "description": "网课连续播放、框选搜题、资料检索与自定义 AI 助手。",
+  "description": "连续播放、资料检索与授权课程测试辅助。",
   "permissions": [
-    "storage",
-    "activeTab"
+    "storage"
   ],
   "host_permissions": [
     "https://*/*",

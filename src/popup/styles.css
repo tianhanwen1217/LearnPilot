@@ -90,20 +90,6 @@ h1 { margin: 0; color: #2b2b29; font-size: 18px; font-weight: 650; }
 }
 .assistant-heading i.connected { border-color: #c5d0c8; color: #58705f; background: #f1f5f1; }
 
-.quick-tools {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 7px;
-  margin-bottom: 10px;
-}
-.quick-tools button {
-  min-height: 36px;
-  padding: 6px 5px;
-  color: #526783;
-  background: #fafbfd;
-  font-size: 10px;
-}
-
 .controls {
   display: grid;
   gap: 8px;
