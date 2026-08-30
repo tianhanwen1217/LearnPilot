@@ -144,8 +144,8 @@ export function App() {
     setStatus(message);
   }, [courseId]);
 
-  const analyzeCurrentQuestion = useCallback(async (): Promise<{ question: ExtractedQuestion; result: AnalysisResult } | null> => {
-    if (busyRef.current) return null;
+  const analyzeCurrentQuestion = useCallback(async (): Promise<{ question: ExtractedQuestion; result: AnalysisResult } | { error: string }> => {
+    if (busyRef.current) return { error: "上一道题仍在处理中" };
     busyRef.current = true;
     setBusy(true);
     try {
@@ -156,8 +156,9 @@ export function App() {
       if (!response.ok || !response.data) throw new Error(response.error || "题目分析失败");
       return { question: extracted.question, result: response.data };
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
-      return null;
+      const message = error instanceof Error ? error.message : String(error);
+      setStatus(message);
+      return { error: message };
     } finally {
       busyRef.current = false;
       setBusy(false);
@@ -175,9 +176,9 @@ export function App() {
         }
         if (!extractCurrentQuestion(false)) return;
         const analyzed = await analyzeCurrentQuestion();
-        if (!analyzed || !autoRef.current || assistantPausedRef.current) {
-          if (assistantPausedRef.current) return;
-          await stopAuto("题目分析失败，已停止");
+        if (!autoRef.current || assistantPausedRef.current) return;
+        if ("error" in analyzed) {
+          await stopAuto(`${analyzed.error}；已停止`);
           return;
         }
         const settings = await getSettings();
@@ -185,13 +186,19 @@ export function App() {
           await stopAuto(`置信度 ${analyzed.result.confidence}% 低于阈值，已停止`);
           return;
         }
-        if (analyzed.result.warnings.length || !analyzed.result.suggestedOptions.length) {
-          await stopAuto("答案存在警告或无法匹配选项，已停止");
+        if (analyzed.result.warnings.length) {
+          await stopAuto(`模型提示：${analyzed.result.warnings[0]}；已停止`);
+          return;
+        }
+        if (!analyzed.result.suggestedOptions.length) {
+          await stopAuto(analyzed.question.options.length
+            ? "模型没有返回可勾选的选项；已停止"
+            : "没有识别到可勾选的选项；当前页面可能是填空/简答题或选项结构尚未适配");
           return;
         }
         const applied = applySuggestedOptions(analyzed.result);
         if (!applied.applied || applied.missing.length) {
-          await stopAuto("未能完整勾选答案，已停止");
+          await stopAuto(`答案已分析为 ${analyzed.result.suggestedOptions.join("、")}，但页面选项匹配失败${applied.missing.length ? `（缺少 ${applied.missing.join("、")}）` : ""}`);
           return;
         }
         setStatus(`已勾选 ${analyzed.result.suggestedOptions.join("、")}，准备下一题`);
@@ -672,6 +679,7 @@ export function App() {
       <div className="question-progress" aria-label={`已完成 ${questionSummary?.answered ?? 0} / ${questionSummary?.total ?? 1}`}><i style={{ width: `${((questionSummary?.answered ?? 0) / Math.max(1, questionSummary?.total ?? 1)) * 100}%` }} /></div>
       <div className="question-groups">{questionGroups.map((group) => <section key={group.type}><h3>{QUESTION_TYPE_LABELS[group.type]} <small>({group.items.length})</small></h3><div className="question-grid">{group.items.map((item) => <span key={item.index} className={`${item.answered ? "answered " : ""}${item.current ? "current" : ""}`} title={`第 ${item.index} 题`}>{item.index}</span>)}</div></section>)}</div>
       <button type="button" className={`question-start${autoAnswer ? " running" : ""}`} disabled={busy} onClick={() => void updateAutoAnswer(!autoAnswer)}>{busy ? "正在处理…" : autoAnswer ? "停止答题" : "开始答题"}</button>
+      <p className={`question-live-status${/失败|错误|未识别|没有|无法|低于|请先|已停止/.test(status) ? " error" : ""}`}>{status}</p>
       <p className="question-note">按置信度自动勾选并进入下一题，最终提交仍由你点击。</p>
     </section> : <>
       <section className="controls" aria-busy={busy}>

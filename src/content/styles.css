@@ -128,6 +128,8 @@ button:disabled, select:disabled { cursor: default; opacity: .55; }
 .question-start:hover { border-color: #5f769d; background: #5f769d; }
 .question-start.running { border-color: #c5b7a5; color: #5e5850; background: #f3eee5; }
 .question-start.running:hover { border-color: #b9aa97; background: #ebe3d7; }
+.question-live-status { margin: 10px 3px 0; padding: 8px 10px; border-radius: 8px; color: #566b5d; background: #f0f5f1; font-size: 9px; line-height: 1.5; text-align: center; overflow-wrap: anywhere; }
+.question-live-status.error { color: #955050; background: #f8eeee; }
 .question-note { margin: 9px 3px 0; color: var(--lp-muted); font-size: 9px; line-height: 1.5; text-align: center; }
 
 .controls { display: grid; gap: 10px; padding: 16px 14px 12px; }

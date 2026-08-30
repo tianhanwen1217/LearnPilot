@@ -122,9 +122,12 @@ async function processFrameQuestion(): Promise<void> {
     if (frameAutomation.paused || !frameAutomation.autoAnswer) return;
     const settings = await getSettings();
     if (response.data.confidence < settings.confidenceThreshold) return void await stopFrameAuto(`置信度 ${response.data.confidence}% 低于阈值，已停止`);
-    if (response.data.warnings.length || !response.data.suggestedOptions.length) return void await stopFrameAuto("答案存在警告或无法匹配选项，已停止");
+    if (response.data.warnings.length) return void await stopFrameAuto(`模型提示：${response.data.warnings[0]}；已停止`);
+    if (!response.data.suggestedOptions.length) return void await stopFrameAuto(extracted.question.options.length
+      ? "模型没有返回可勾选的选项；已停止"
+      : "没有识别到可勾选的选项；当前页面可能是填空/简答题或选项结构尚未适配");
     const applied = applySuggestedOptions(response.data);
-    if (!applied.applied || applied.missing.length) return void await stopFrameAuto("未能完整勾选答案，已停止");
+    if (!applied.applied || applied.missing.length) return void await stopFrameAuto(`答案已分析为 ${response.data.suggestedOptions.join("、")}，但页面选项匹配失败${applied.missing.length ? `（缺少 ${applied.missing.join("、")}）` : ""}`);
     reportFrameState("question", `已勾选 ${response.data.suggestedOptions.join("、")}，准备下一题`, true);
     await new Promise((resolve) => window.setTimeout(resolve, settings.autoNextDelayMs));
     if (frameAutomation.paused || !frameAutomation.autoAnswer) return;

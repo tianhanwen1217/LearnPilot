@@ -18,7 +18,8 @@ const STEM_SELECTORS = [
 ];
 const OPTION_SELECTORS = [
   ".answerList li", ".answer-list li", ".option", ".answer-option", ".stem_answer li",
-  ".Zy_ulTop li", "[class*='option-item']", "[class*='answerItem']", "label",
+  ".Zy_ulTop li", "[class*='option-item']", "[class*='answerItem']", "[class*='radio-wrapper']",
+  "[class*='checkbox-wrapper']", ".el-radio", ".el-checkbox", "label",
 ];
 
 function isVisible(element: Element): element is HTMLElement {
@@ -67,8 +68,7 @@ function chooseContainer(): HTMLElement | null {
 
 function optionElementsIn(container: HTMLElement): HTMLElement[] {
   const fromInputs = [...container.querySelectorAll<HTMLInputElement>("input[type=radio], input[type=checkbox]")]
-    .filter(isVisible)
-    .map((input) => input.closest<HTMLElement>("label, li, .option, .answer-option, [class*='option-item']") ?? input);
+    .map((input) => input.closest<HTMLElement>("label, li, .option, .answer-option, [class*='option-item'], [class*='radio-wrapper'], [class*='checkbox-wrapper'], .el-radio, .el-checkbox") ?? input);
   if (fromInputs.length) return [...new Set(fromInputs)].filter(isVisible);
   const candidates = uniqueElements(OPTION_SELECTORS, container);
   return candidates.filter((element) => !candidates.some((other) => other !== element && element.contains(other)));
