@@ -59,7 +59,11 @@ writeJson("public/manifest.json", manifest);
 writeJson("package-lock.json", packageLock);
 
 try {
-  execFileSync("npm", ["run", "check"], { cwd: root, stdio: "inherit", shell: process.platform === "win32" });
+  if (process.platform === "win32") {
+    execFileSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", "npm run check"], { cwd: root, stdio: "inherit" });
+  } else {
+    execFileSync("npm", ["run", "check"], { cwd: root, stdio: "inherit" });
+  }
   mkdirSync(resolve(root, "release"), { recursive: true });
   writeFileSync(resolve(root, `release/LearnPilot-${version}.zip`), zipSync(filesForZip(resolve(root, "dist")), { level: 9 }));
   git("add", "package.json", "package-lock.json", "public/manifest.json");
