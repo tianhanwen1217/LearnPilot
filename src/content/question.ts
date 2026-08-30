@@ -22,6 +22,7 @@ const OPTION_SELECTORS = [
   ".Zy_ulTop li", "[class*='option-item']", "[class*='answerItem']", "[class*='radio-wrapper']",
   "[class*='checkbox-wrapper']", ".el-radio", ".el-checkbox", "label",
 ];
+let preferredQuestionId: string | null = null;
 
 function isVisible(element: Element): element is HTMLElement {
   if (!(element instanceof HTMLElement)) return false;
@@ -66,6 +67,11 @@ function candidateContainers(): HTMLElement[] {
 function chooseContainer(): HTMLElement | null {
   const candidates = candidateContainers();
   if (!candidates.length) return null;
+  if (preferredQuestionId) {
+    const preferred = candidates.find((element) => questionDomFromContainer(element)?.question.id === preferredQuestionId);
+    if (preferred) return preferred;
+    preferredQuestionId = null;
+  }
   const viewportCenter = innerHeight / 2;
   return candidates
     .map((element) => {
@@ -165,6 +171,18 @@ export function inspectQuestionPage(): QuestionPageSummary | null {
   };
 }
 
+export function focusFirstUnansweredQuestion(excludedQuestionIds: ReadonlySet<string> = new Set()): boolean {
+  const target = candidateContainers().find((container) => {
+    if (containerAnswered(container)) return false;
+    const questionId = questionDomFromContainer(container)?.question.id;
+    return !questionId || !excludedQuestionIds.has(questionId);
+  });
+  if (!target) return false;
+  preferredQuestionId = questionDomFromContainer(target)?.question.id ?? null;
+  target.scrollIntoView({ behavior: "auto", block: "center" });
+  return true;
+}
+
 function parseSelectedText(selectedText: string): ExtractedQuestion | null {
   const lines = cleanVisibleText(selectedText).split("\n").map((line) => line.trim()).filter(Boolean);
   if (!lines.length) return null;
@@ -245,6 +263,7 @@ export function clickNextQuestion(excludedQuestionIds: ReadonlySet<string> = new
     return !disabled && /^(下一题|下一页|下一个)$/.test(text) && !/提交|交卷|完成/.test(text);
   });
   if (target) {
+    preferredQuestionId = null;
     target.click();
     return true;
   }
@@ -261,6 +280,7 @@ export function clickNextQuestion(excludedQuestionIds: ReadonlySet<string> = new
     return !questionId || !excludedQuestionIds.has(questionId);
   });
   if (!next || next === current) return false;
+  preferredQuestionId = questionDomFromContainer(next)?.question.id ?? null;
   next.scrollIntoView({ behavior: "auto", block: "center" });
   return true;
 }

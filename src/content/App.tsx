@@ -5,7 +5,7 @@ import { effectiveConfidenceThreshold } from "../shared/confidence";
 import { applyProviderPreset, detectApiProvider } from "../shared/providers";
 import { getSettings, saveSettings } from "../shared/storage";
 import type { AnalysisResult, AnswerRunStats, CourseSessionState, DetectedTaskState, ExtractedQuestion, MessageResponse, QuestionPageSummary, QuestionType, RuntimeMessage, TabAutomationState, VideoProgress } from "../shared/types";
-import { applySuggestedOptions, clickNextQuestion, detectCourseId, extractCurrentQuestion, inspectQuestionPage } from "./question";
+import { applySuggestedOptions, clickNextQuestion, detectCourseId, extractCurrentQuestion, focusFirstUnansweredQuestion, inspectQuestionPage } from "./question";
 import { advanceToNextLesson, initializePlaybackFrame } from "./playback";
 import { clampLauncherPosition, launcherMovementExceeded, snapLauncherPosition, type LauncherPoint } from "./launcher";
 import { clampPanelOpacity, clampPanelPosition, clampPanelScale } from "./panel";
@@ -96,7 +96,7 @@ export function App() {
   const videoSignalRef = useRef<{ progress: VideoProgress; receivedAt: number } | null>(null);
   const remoteTaskRef = useRef<{ state: DetectedTaskState; message: string; frameId: number; receivedAt: number; questionSummary?: QuestionPageSummary; answerStats?: AnswerRunStats } | null>(null);
   const answerStatsRef = useRef<AnswerRunStats>(emptyAnswerRunStats());
-  const skippedQuestionIdsRef = useRef(new Set<string>());
+  const processedQuestionIdsRef = useRef(new Set<string>());
   const lastTaskUrlRef = useRef(location.href);
   const lastAdvanceAtRef = useRef(0);
   const launcherTimerRef = useRef<number | null>(null);
@@ -186,19 +186,19 @@ export function App() {
           await stopAuto("检测到签到、登录或验证，已暂停");
           return false;
         }
-        if (!clickNextQuestion(skippedQuestionIdsRef.current)) {
-          await stopAuto(answerRunSummary(answerStatsRef.current));
+        if (!clickNextQuestion(processedQuestionIdsRef.current)) {
+          await stopAuto(answerRunSummary(answerStatsRef.current, inspectQuestionPage()?.total));
           return false;
         }
         if (!await waitForQuestionChange(question.id)) {
-          await stopAuto(`${answerRunSummary(answerStatsRef.current)}；页面没有切换到下一题`);
+          await stopAuto(`${answerRunSummary(answerStatsRef.current, inspectQuestionPage()?.total)}；页面没有切换到下一题`);
           return false;
         }
         return true;
       };
 
       const skipAndContinue = async (question: ExtractedQuestion, reason: string, settings: Awaited<ReturnType<typeof getSettings>>): Promise<boolean> => {
-        skippedQuestionIdsRef.current.add(question.id);
+        processedQuestionIdsRef.current.add(question.id);
         const index = inspectQuestionPage()?.currentIndex;
         const stats = recordSkipped(answerStatsRef.current, question.id, reason, index);
         updateAnswerStats(stats);
@@ -215,9 +215,14 @@ export function App() {
           await stopAuto("检测到超星加密字体；DeepSeek 文本模型无法读取页面文字，已停止");
           return;
         }
-        if (!extractCurrentQuestion(false)) {
-          if (answerStatsRef.current.processed) await stopAuto(answerRunSummary(answerStatsRef.current));
+        const currentQuestion = extractCurrentQuestion(false);
+        if (!currentQuestion) {
+          if (answerStatsRef.current.processed) await stopAuto(answerRunSummary(answerStatsRef.current, inspectQuestionPage()?.total));
           return;
+        }
+        if (processedQuestionIdsRef.current.has(currentQuestion.question.id)) {
+          if (!clickNextQuestion(processedQuestionIdsRef.current)) await stopAuto(answerRunSummary(answerStatsRef.current, inspectQuestionPage()?.total));
+          continue;
         }
         const analyzed = await analyzeCurrentQuestion();
         if (!autoRef.current || assistantPausedRef.current) return;
@@ -255,6 +260,7 @@ export function App() {
           if (!await skipAndContinue(analyzed.question, reason, settings)) return;
           continue;
         }
+        processedQuestionIdsRef.current.add(analyzed.question.id);
         updateAnswerStats(recordAnswered(answerStatsRef.current));
         setStatus(`已勾选 ${analyzed.result.suggestedOptions.join("、")}；成功 ${answerStatsRef.current.answered}，跳过 ${answerStatsRef.current.skipped}`);
         if (!await advanceOrFinish(analyzed.question, settings)) return;
@@ -271,8 +277,9 @@ export function App() {
     }
     autoRef.current = true;
     pausedReasonRef.current = "";
-    skippedQuestionIdsRef.current = new Set();
+    processedQuestionIdsRef.current = new Set();
     updateAnswerStats(emptyAnswerRunStats());
+    focusFirstUnansweredQuestion(processedQuestionIdsRef.current);
     setAutoAnswer(true);
     const current = await loadCourseState(courseId);
     await saveCourseState({ ...current, testMode: true, autoRunning: true });
@@ -725,7 +732,7 @@ export function App() {
       <div className="question-progress" aria-label={`已完成 ${questionSummary?.answered ?? 0} / ${questionSummary?.total ?? 1}`}><i style={{ width: `${((questionSummary?.answered ?? 0) / Math.max(1, questionSummary?.total ?? 1)) * 100}%` }} /></div>
       <div className="question-groups">{questionGroups.map((group) => <section key={group.type}><h3>{QUESTION_TYPE_LABELS[group.type]} <small>({group.items.length})</small></h3><div className="question-grid">{group.items.map((item) => <span key={item.index} className={`${item.answered ? "answered " : ""}${item.id && skippedQuestionIds.has(item.id) ? "skipped " : ""}${item.current ? "current" : ""}`} title={`第 ${item.index} 题${item.id && skippedQuestionIds.has(item.id) ? " · 已跳过" : ""}`}>{item.index}</span>)}</div></section>)}</div>
       <button type="button" className={`question-start${autoAnswer ? " running" : ""}`} disabled={busy} onClick={() => void updateAutoAnswer(!autoAnswer)}>{busy ? "正在处理…" : autoAnswer ? "停止答题" : "开始答题"}</button>
-      {(answerStats.processed > 0 || answerStats.skipped > 0) && <div className="answer-stats"><span>已处理 {answerStats.processed}</span><b>成功 {answerStats.answered}</b><em>跳过 {answerStats.skipped}</em></div>}
+      {(answerStats.processed > 0 || answerStats.skipped > 0) && <div className="answer-stats"><span>已处理 {answerStats.processed}/{questionSummary?.total ?? answerStats.processed}</span><b>成功 {answerStats.answered}</b><em>跳过 {answerStats.skipped}</em></div>}
       <p className={`question-live-status${/失败|错误|未识别|没有|无法|低于|请先|已停止/.test(status) ? " error" : ""}`}>{status}</p>
       {!autoAnswer && answerStats.failures.length > 0 && <details className="answer-report"><summary>查看跳过题目明细</summary><ul>{answerStats.failures.slice(0, 12).map((failure) => <li key={failure.questionId}>{failure.index ? `第 ${failure.index} 题：` : ""}{failure.reason}</li>)}</ul>{answerStats.failures.length > 12 && <small>另有 {answerStats.failures.length - 12} 题被跳过</small>}</details>}
       <p className="question-note">按置信度自动勾选并进入下一题，最终提交仍由你点击。</p>

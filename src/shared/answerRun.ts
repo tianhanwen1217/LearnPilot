@@ -18,8 +18,9 @@ export function recordSkipped(stats: AnswerRunStats, questionId: string, reason:
   };
 }
 
-export function answerRunSummary(stats: AnswerRunStats): string {
-  return `本轮完成：成功 ${stats.answered} 题，跳过 ${stats.skipped} 题；请检查后手动提交`;
+export function answerRunSummary(stats: AnswerRunStats, total?: number): string {
+  const progress = total ? `已处理 ${stats.processed}/${total}，` : "";
+  return `本轮完成：${progress}成功 ${stats.answered} 题，跳过 ${stats.skipped} 题；请检查后手动提交`;
 }
 
 export function isSystemicAnalysisError(message: string): boolean {

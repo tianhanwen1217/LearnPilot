@@ -7,6 +7,7 @@ describe("fault-tolerant answer run", () => {
     stats = recordAnswered(stats);
     expect(stats).toMatchObject({ processed: 2, answered: 1, skipped: 1 });
     expect(answerRunSummary(stats)).toContain("成功 1 题，跳过 1 题");
+    expect(answerRunSummary(stats, 44)).toContain("已处理 2/44");
   });
 
   it("does not count the same skipped question twice", () => {

@@ -3,7 +3,7 @@ import { effectiveConfidenceThreshold } from "../shared/confidence";
 import { answerRunSummary, emptyAnswerRunStats, isSystemicAnalysisError, recordAnswered, recordSkipped } from "../shared/answerRun";
 import { getSettings } from "../shared/storage";
 import type { AnalysisResult, AnswerRunStats, DetectedTaskState, MessageResponse, QuestionPageSummary, RuntimeMessage, TabAutomationState, VideoProgress } from "../shared/types";
-import { applySuggestedOptions, clickNextQuestion, extractCurrentQuestion, inspectQuestionPage } from "./question";
+import { applySuggestedOptions, clickNextQuestion, extractCurrentQuestion, focusFirstUnansweredQuestion, inspectQuestionPage } from "./question";
 
 export type PageTaskKind = DetectedTaskState;
 
@@ -85,7 +85,7 @@ let lastFrameReportAt = 0;
 let lastFrameTextScrollAt = 0;
 let lastFrameSyncAt = 0;
 let frameAnswerStats = emptyAnswerRunStats();
-let frameSkippedQuestionIds = new Set<string>();
+let frameProcessedQuestionIds = new Set<string>();
 
 async function syncFrameControls(): Promise<void> {
   const now = Date.now();
@@ -99,7 +99,8 @@ async function syncFrameControls(): Promise<void> {
   if (automation?.ok && automation.data) {
     if (!frameAutomation.autoAnswer && automation.data.autoAnswer) {
       frameAnswerStats = emptyAnswerRunStats();
-      frameSkippedQuestionIds = new Set();
+      frameProcessedQuestionIds = new Set();
+      focusFirstUnansweredQuestion(frameProcessedQuestionIds);
     }
     frameAutomation = automation.data;
   }
@@ -125,17 +126,21 @@ async function processFrameQuestion(): Promise<void> {
   if (inspectQuestionPage()?.encryptedText) return void await stopFrameAuto("检测到超星加密字体；DeepSeek 文本模型无法读取页面文字，已停止");
   const extracted = extractCurrentQuestion(false);
   if (!extracted) return;
+  if (frameProcessedQuestionIds.has(extracted.question.id)) {
+    if (!clickNextQuestion(frameProcessedQuestionIds)) await stopFrameAuto(answerRunSummary(frameAnswerStats, inspectQuestionPage()?.total));
+    return;
+  }
   frameQuestionBusy = true;
   try {
     const settings = await getSettings();
     const skipAndContinue = async (reason: string) => {
-      frameSkippedQuestionIds.add(extracted.question.id);
+      frameProcessedQuestionIds.add(extracted.question.id);
       const index = inspectQuestionPage()?.currentIndex;
       frameAnswerStats = recordSkipped(frameAnswerStats, extracted.question.id, reason, index);
       reportFrameState("question", `${index ? `第 ${index} 题` : "当前题"}已跳过：${reason}；继续下一题`, true, inspectQuestionPage() ?? undefined, frameAnswerStats);
       await new Promise((resolve) => window.setTimeout(resolve, settings.autoNextDelayMs));
       if (!frameAutomation.autoAnswer || frameAutomation.paused) return;
-      if (!clickNextQuestion(frameSkippedQuestionIds)) await stopFrameAuto(answerRunSummary(frameAnswerStats));
+      if (!clickNextQuestion(frameProcessedQuestionIds)) await stopFrameAuto(answerRunSummary(frameAnswerStats, inspectQuestionPage()?.total));
     };
 
     reportFrameState("question", "题目处理中…", true, inspectQuestionPage() ?? undefined, frameAnswerStats);
@@ -153,12 +158,13 @@ async function processFrameQuestion(): Promise<void> {
       : "没有识别到可勾选的选项；当前页面可能是填空/简答题或选项结构尚未适配");
     const applied = applySuggestedOptions(response.data);
     if (!applied.applied || applied.missing.length) return void await skipAndContinue(`答案为 ${response.data.suggestedOptions.join("、")}，但页面选项匹配失败${applied.missing.length ? `（缺少 ${applied.missing.join("、")}）` : ""}`);
+    frameProcessedQuestionIds.add(extracted.question.id);
     frameAnswerStats = recordAnswered(frameAnswerStats);
     reportFrameState("question", `已勾选 ${response.data.suggestedOptions.join("、")}；成功 ${frameAnswerStats.answered}，跳过 ${frameAnswerStats.skipped}`, true, inspectQuestionPage() ?? undefined, frameAnswerStats);
     await new Promise((resolve) => window.setTimeout(resolve, settings.autoNextDelayMs));
     if (frameAutomation.paused || !frameAutomation.autoAnswer) return;
     if (pageHasBlockingPrompt()) return void await stopFrameAuto("检测到签到、登录或验证，已暂停");
-    if (!clickNextQuestion(frameSkippedQuestionIds)) return void await stopFrameAuto(answerRunSummary(frameAnswerStats));
+    if (!clickNextQuestion(frameProcessedQuestionIds)) return void await stopFrameAuto(answerRunSummary(frameAnswerStats, inspectQuestionPage()?.total));
   } finally {
     frameQuestionBusy = false;
   }
@@ -192,7 +198,7 @@ async function inspectFrameTask(): Promise<void> {
     text: framePlaybackEnabled ? "文本任务处理中…" : "已识别文本任务",
     idle: "未识别到可处理的课程内容",
   };
-  reportFrameState(state, messages[state], false, state === "question" ? questionSummary ?? undefined : undefined, state === "question" ? frameAnswerStats : undefined);
+  reportFrameState(state, messages[state], false, state === "question" ? questionSummary ?? undefined : undefined, state === "question" && window.top !== window ? frameAnswerStats : undefined);
   if (state === "blocked" && frameAutomation.autoAnswer) await stopFrameAuto(messages.blocked);
   if (state === "question") void processFrameQuestion();
   if (state === "text" && framePlaybackEnabled && Date.now() - lastFrameTextScrollAt > 1600) {
@@ -217,7 +223,8 @@ export function setFramePlaybackState(enabled: boolean): void {
 export function setFrameAutomationState(state: TabAutomationState): void {
   if (!frameAutomation.autoAnswer && state.autoAnswer) {
     frameAnswerStats = emptyAnswerRunStats();
-    frameSkippedQuestionIds = new Set();
+    frameProcessedQuestionIds = new Set();
+    focusFirstUnansweredQuestion(frameProcessedQuestionIds);
   }
   frameAutomation = state;
   void inspectFrameTask();
