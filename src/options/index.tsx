@@ -93,7 +93,7 @@ function Options() {
           <label><span>当前模型</span><div className="preset-value"><b>{providerName}</b><small>{settings.model}</small></div></label>
           <label className="wide"><span>API Key</span><input type="password" value={settings.apiKey} onChange={(event) => update("apiKey", event.target.value)} placeholder={provider === "deepseek" ? "填写 DeepSeek API Key" : "sk-…"} autoComplete="off" /></label>
         </div>
-        <p className="note">密钥不能可靠识别服务商，因此只会发送给你选中的平台。默认仅保留到当前浏览器会话结束。</p>
+        <p className="note">密钥不能可靠识别服务商，因此只会发送给你选中的平台。默认保存在本机浏览器扩展配置中，重新加载扩展后仍然保留。</p>
         {provider === "deepseek" && <p className="provider-tip">DeepSeek 默认使用 <code>deepseek-chat</code>。仅使用 DeepSeek Key 时不会启用网页搜索；需要联网资料可在高级设置中配置 Tavily。</p>}
       </section>
 
@@ -106,7 +106,7 @@ function Options() {
               <label className="wide"><span>API Base URL</span><input value={settings.apiBaseUrl} onChange={(event) => { update("apiBaseUrl", event.target.value); setProvider("custom"); }} /></label>
               <label><span>接口模式</span><select value={settings.apiMode} onChange={(event) => { update("apiMode", event.target.value as ExtensionSettings["apiMode"]); setProvider("custom"); }}><option value="responses">Responses API</option><option value="chat_completions">Chat Completions</option></select></label>
               <label><span>模型名称</span><input value={settings.model} onChange={(event) => { update("model", event.target.value); setProvider("custom"); }} /></label>
-              <label><span>密钥保存方式</span><select value={settings.apiKeyStorage} onChange={(event) => update("apiKeyStorage", event.target.value as ExtensionSettings["apiKeyStorage"])}><option value="session">仅当前浏览器会话</option><option value="local">保存在本机浏览器</option></select></label>
+              <label><span>密钥保存方式</span><select value={settings.apiKeyStorage} onChange={(event) => update("apiKeyStorage", event.target.value as ExtensionSettings["apiKeyStorage"])}><option value="local">保存在本机浏览器（推荐）</option><option value="session">仅当前浏览器会话</option></select></label>
               <NumberField label="请求超时" value={Math.round(settings.requestTimeoutMs / 1000)} min={10} max={120} suffix="秒" onChange={(value) => update("requestTimeoutMs", value * 1000)} />
             </div>
           </div>

@@ -8,7 +8,11 @@ export async function getSettings(): Promise<ExtensionSettings> {
   const session = await chrome.storage.session.get(SESSION_SECRETS_KEY);
   const stored = (local[LOCAL_SETTINGS_KEY] ?? {}) as Partial<ExtensionSettings>;
   const secrets = (session[SESSION_SECRETS_KEY] ?? {}) as Partial<SessionSecrets>;
-  return { ...DEFAULT_SETTINGS, ...stored, ...secrets };
+  const settings = { ...DEFAULT_SETTINGS, ...stored, ...secrets };
+  if (settings.apiKeyStorage === "session" && !secrets.apiKey && !stored.apiKey) {
+    settings.apiKeyStorage = "local";
+  }
+  return settings;
 }
 
 export async function saveSettings(settings: ExtensionSettings): Promise<void> {

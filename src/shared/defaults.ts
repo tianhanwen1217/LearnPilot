@@ -3,7 +3,7 @@ import type { ExtensionSettings } from "./types";
 export const DEFAULT_SETTINGS: ExtensionSettings = {
   apiBaseUrl: "https://api.deepseek.com",
   apiKey: "",
-  apiKeyStorage: "session",
+  apiKeyStorage: "local",
   apiMode: "chat_completions",
   model: "deepseek-chat",
   searchMode: "none",

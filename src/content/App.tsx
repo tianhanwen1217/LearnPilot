@@ -538,7 +538,7 @@ export function App() {
       const settings = {
         ...applyProviderPreset(current, "deepseek"),
         apiKey,
-        apiKeyStorage: "session" as const,
+        apiKeyStorage: "local" as const,
       };
       await saveSettings(settings);
       const response = await chrome.runtime.sendMessage({ type: "TEST_CONNECTION", settings } satisfies RuntimeMessage) as MessageResponse<string>;
