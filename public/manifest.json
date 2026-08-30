@@ -1,9 +1,11 @@
 {
   "manifest_version": 3,
   "name": "LearnPilot",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "连续播放、资料检索与授权课程测试辅助。",
-  "permissions": ["storage"],
+  "permissions": [
+    "storage"
+  ],
   "host_permissions": [
     "https://*/*",
     "http://*/*"
@@ -33,14 +35,18 @@
         "https://*/*",
         "http://*/*"
       ],
-      "js": ["content.js"],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_idle",
       "all_frames": true
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["icons/learnpilot.png"],
+      "resources": [
+        "icons/learnpilot.png"
+      ],
       "matches": [
         "https://*/*",
         "http://*/*"
