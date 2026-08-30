@@ -1,12 +1,12 @@
 import type { ExtensionSettings } from "./types";
 
 export const DEFAULT_SETTINGS: ExtensionSettings = {
-  apiBaseUrl: "https://api.openai.com/v1",
+  apiBaseUrl: "https://api.deepseek.com",
   apiKey: "",
   apiKeyStorage: "session",
-  apiMode: "responses",
-  model: "",
-  searchMode: "responses_web",
+  apiMode: "chat_completions",
+  model: "deepseek-chat",
+  searchMode: "none",
   tavilyApiKey: "",
   analysisMode: "detailed",
   confidenceThreshold: 88,
