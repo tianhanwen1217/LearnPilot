@@ -32,7 +32,10 @@ function isVisible(element: Element): element is HTMLElement {
 }
 
 function uniqueElements(selectors: string[], root: ParentNode = document): HTMLElement[] {
-  return [...new Set(selectors.flatMap((selector) => [...root.querySelectorAll(selector)]))].filter(isVisible);
+  // A selector-by-selector flatMap groups nodes by selector, which changes the
+  // page order whenever different question types use different class names.
+  // A single selector list keeps querySelectorAll's document order.
+  return [...root.querySelectorAll(selectors.join(","))].filter(isVisible);
 }
 
 function stripOptionPrefix(value: string): string {
@@ -114,9 +117,15 @@ function questionDomFromContainer(container: HTMLElement): QuestionDom | null {
   }
   if (!stem) return null;
 
+  const explicitId = container.getAttribute("data-question-id")
+    || container.getAttribute("data")
+    || container.id;
+
   return {
     question: {
-      id: stableId(stem + options.map((item) => item.text).join("")),
+      id: explicitId
+        ? `dom:${explicitId}:${stableId(stem + options.map((item) => item.text).join(""))}`
+        : stableId(stem + options.map((item) => item.text).join("")),
       type: inferQuestionType(stem, options.length),
       stem,
       options,
@@ -130,6 +139,7 @@ function questionDomFromContainer(container: HTMLElement): QuestionDom | null {
 
 function containerAnswered(container: HTMLElement): boolean {
   if (container.querySelector("input[type=radio]:checked, input[type=checkbox]:checked")) return true;
+  if (container.querySelector(".num_option.check_answer, .check_answer, [aria-checked='true'], .answerBg.selected, .answerBg.checked, .option.selected, .option.checked")) return true;
   if ([...container.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("textarea, input:not([type]), input[type=text]")].some((input) => input.value.trim())) return true;
   return /(?:answered|finished|completed|has-answer|is-done)/i.test(container.className.toString());
 }
@@ -156,13 +166,16 @@ export function inspectQuestionPage(): QuestionPageSummary | null {
   const containers = candidateContainers();
   if (!containers.length) return null;
   const currentContainer = chooseContainer();
-  const items = containers.slice(0, 120).map((container, offset): QuestionPageItem => ({
-    id: questionDomFromContainer(container)?.question.id,
-    index: offset + 1,
-    type: questionDomFromContainer(container)?.question.type ?? "unknown",
-    answered: containerAnswered(container),
-    current: container === currentContainer || /(?:active|current|\bcur\b)/i.test(container.className.toString()),
-  }));
+  const items = containers.slice(0, 120).map((container, offset): QuestionPageItem => {
+    const parsed = questionDomFromContainer(container);
+    return {
+      id: parsed?.question.id,
+      index: offset + 1,
+      type: parsed?.question.type ?? "unknown",
+      answered: containerAnswered(container),
+      current: container === currentContainer || /(?:active|current|\bcur\b)/i.test(container.className.toString()),
+    };
+  });
   const pageText = cleanVisibleText(document.body.innerText);
   const progress = pageText.match(/第\s*(\d+)\s*[\/／]\s*(\d+)\s*题/);
   return {

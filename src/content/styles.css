@@ -112,6 +112,7 @@ button:disabled, select:disabled { cursor: default; opacity: .55; }
 .question-overview span { display: flex; align-items: center; gap: 5px; color: #696d71; font-size: 10px; white-space: nowrap; }
 .question-overview i { width: 7px; height: 7px; margin-left: 5px; border-radius: 50%; }
 .question-overview .answered-dot { background: #667fa8; }
+.question-overview .skipped-dot { background: #d6ae69; }
 .question-overview .pending-dot { background: #d8d2ca; }
 .question-progress { height: 4px; margin: 12px 0 15px; overflow: hidden; border-radius: 999px; background: #ebe7e0; }
 .question-progress i { display: block; height: 100%; border-radius: inherit; background: #667fa8; transition: width 180ms ease; }
@@ -122,10 +123,9 @@ button:disabled, select:disabled { cursor: default; opacity: .55; }
 .question-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; }
 .question-grid span { display: grid; aspect-ratio: 1; place-items: center; min-width: 0; border: 1px solid #e3ded7; border-radius: 50%; color: #777b7f; background: #f4f2ee; font-size: 10px; }
 .question-grid span.answered { border-color: #667fa8; color: #fff; background: #667fa8; }
-.question-grid span.current { border-color: #667fa8; color: #526b95; background: #fff; box-shadow: inset 0 0 0 1px #667fa8; font-weight: 700; }
-.question-grid span.answered.current { color: #fff; background: #667fa8; box-shadow: 0 0 0 2px rgba(102, 127, 168, .18); }
 .question-grid span.skipped { border-color: #d6ae69; color: #8b672d; background: #fbf3e5; }
-.question-grid span.skipped.current { box-shadow: inset 0 0 0 1px #d6ae69; }
+.question-grid span.processing { border-color: #555b60; color: #34383d; background: #fff; box-shadow: 0 0 0 2px rgba(52, 56, 61, .12); font-weight: 700; animation: lp-question-processing .8s ease-in-out infinite alternate; }
+@keyframes lp-question-processing { to { box-shadow: 0 0 0 4px rgba(52, 56, 61, .05); opacity: .72; } }
 .question-start { width: 100%; min-height: 42px; margin-top: 16px; border-color: #667fa8; color: #fff; background: #667fa8; font-size: 13px; font-weight: 650; }
 .question-start:hover { border-color: #5f769d; background: #5f769d; }
 .question-start.running { border-color: #c5b7a5; color: #5e5850; background: #f3eee5; }

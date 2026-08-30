@@ -1,11 +1,22 @@
 import type { AnswerRunStats } from "./types";
 
 export function emptyAnswerRunStats(): AnswerRunStats {
-  return { answered: 0, skipped: 0, processed: 0, failures: [] };
+  return { answered: 0, skipped: 0, processed: 0, answeredQuestionIds: [], failures: [] };
 }
 
-export function recordAnswered(stats: AnswerRunStats): AnswerRunStats {
-  return { ...stats, answered: stats.answered + 1, processed: stats.processed + 1 };
+export function setCurrentQuestion(stats: AnswerRunStats, questionId: string): AnswerRunStats {
+  return { ...stats, currentQuestionId: questionId };
+}
+
+export function recordAnswered(stats: AnswerRunStats, questionId: string): AnswerRunStats {
+  if (stats.answeredQuestionIds.includes(questionId)) return stats;
+  return {
+    ...stats,
+    answered: stats.answered + 1,
+    processed: stats.processed + 1,
+    answeredQuestionIds: [...stats.answeredQuestionIds, questionId],
+    currentQuestionId: undefined,
+  };
 }
 
 export function recordSkipped(stats: AnswerRunStats, questionId: string, reason: string, index?: number): AnswerRunStats {
@@ -14,13 +25,14 @@ export function recordSkipped(stats: AnswerRunStats, questionId: string, reason:
     ...stats,
     skipped: stats.skipped + 1,
     processed: stats.processed + 1,
+    currentQuestionId: undefined,
     failures: [...stats.failures, { questionId, reason, index }],
   };
 }
 
 export function answerRunSummary(stats: AnswerRunStats, total?: number): string {
   const progress = total ? `已处理 ${stats.processed}/${total}，` : "";
-  return `本轮完成：${progress}成功 ${stats.answered} 题，跳过 ${stats.skipped} 题；请检查后手动提交`;
+  return `本轮完成：${progress}已答完 ${stats.answered} 题，存疑 ${stats.skipped} 题；请检查后手动提交`;
 }
 
 export function isSystemicAnalysisError(message: string): boolean {

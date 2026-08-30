@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { answerRunSummary, emptyAnswerRunStats, isSystemicAnalysisError, recordAnswered, recordSkipped } from "../shared/answerRun";
+import { answerRunSummary, emptyAnswerRunStats, isSystemicAnalysisError, recordAnswered, recordSkipped, setCurrentQuestion } from "../shared/answerRun";
 import { courseSessionKey } from "../shared/defaults";
 import { effectiveConfidenceThreshold } from "../shared/confidence";
 import { applyProviderPreset, detectApiProvider } from "../shared/providers";
@@ -202,7 +202,7 @@ export function App() {
         const index = inspectQuestionPage()?.currentIndex;
         const stats = recordSkipped(answerStatsRef.current, question.id, reason, index);
         updateAnswerStats(stats);
-        setStatus(`${index ? `第 ${index} 题` : "当前题"}已跳过：${reason}；继续下一题`);
+        setStatus(`${index ? `第 ${index} 题` : "当前题"}标记存疑：${reason}；继续下一题`);
         return advanceOrFinish(question, settings);
       };
 
@@ -215,6 +215,11 @@ export function App() {
           await stopAuto("检测到超星加密字体；DeepSeek 文本模型无法读取页面文字，已停止");
           return;
         }
+        // The iframe can finish rendering after automation was enabled. Retry the
+        // first-question focus here, immediately before the first model request.
+        if (answerStatsRef.current.processed === 0 && processedQuestionIdsRef.current.size === 0) {
+          focusFirstUnansweredQuestion(processedQuestionIdsRef.current);
+        }
         const currentQuestion = extractCurrentQuestion(false);
         if (!currentQuestion) {
           if (answerStatsRef.current.processed) await stopAuto(answerRunSummary(answerStatsRef.current, inspectQuestionPage()?.total));
@@ -224,6 +229,7 @@ export function App() {
           if (!clickNextQuestion(processedQuestionIdsRef.current)) await stopAuto(answerRunSummary(answerStatsRef.current, inspectQuestionPage()?.total));
           continue;
         }
+        updateAnswerStats(setCurrentQuestion(answerStatsRef.current, currentQuestion.question.id));
         const analyzed = await analyzeCurrentQuestion();
         if (!autoRef.current || assistantPausedRef.current) return;
         if ("error" in analyzed) {
@@ -261,8 +267,8 @@ export function App() {
           continue;
         }
         processedQuestionIdsRef.current.add(analyzed.question.id);
-        updateAnswerStats(recordAnswered(answerStatsRef.current));
-        setStatus(`已勾选 ${analyzed.result.suggestedOptions.join("、")}；成功 ${answerStatsRef.current.answered}，跳过 ${answerStatsRef.current.skipped}`);
+        updateAnswerStats(recordAnswered(answerStatsRef.current, analyzed.question.id));
+        setStatus(`已勾选 ${analyzed.result.suggestedOptions.join("、")}；已答完 ${answerStatsRef.current.answered}，存疑 ${answerStatsRef.current.skipped}`);
         if (!await advanceOrFinish(analyzed.question, settings)) return;
       }
     } finally {
@@ -701,6 +707,13 @@ export function App() {
       .filter((group) => group.items.length)
     : [];
   const skippedQuestionIds = new Set(answerStats.failures.map((item) => item.questionId));
+  const answeredQuestionIds = new Set(answerStats.answeredQuestionIds);
+  const totalQuestions = questionSummary?.total ?? 1;
+  const detectedAnswered = questionSummary?.items.filter((item) => item.answered || Boolean(item.id && answeredQuestionIds.has(item.id))).length ?? 0;
+  const answeredQuestions = Math.max(questionSummary?.answered ?? 0, detectedAnswered, answerStats.answered);
+  const doubtfulQuestions = answerStats.failures.filter((failure) => !answeredQuestionIds.has(failure.questionId)).length;
+  const pendingQuestions = Math.max(0, totalQuestions - answeredQuestions - doubtfulQuestions);
+  const completedQuestions = Math.min(totalQuestions, answeredQuestions + doubtfulQuestions);
 
   if (!open) {
     return <button type="button" className={`floating-button${launcherDragging ? " floating-button-dragging" : ""}${launcherLaunching ? " floating-button-launching" : ""}`} style={{ left: launcherPosition.x, top: launcherPosition.y }} title="拖动位置，点击打开 LearnPilot" aria-label="拖动位置，点击打开 LearnPilot" onPointerDown={beginLauncherDrag} onPointerMove={moveLauncher} onPointerUp={finishLauncherDrag} onPointerCancel={cancelLauncherDrag} onLostPointerCapture={loseLauncherCapture} onClick={() => { if (!launcherSuppressClickRef.current) openFromLauncher(); }}><img src={iconUrl} alt="" draggable={false} /></button>;
@@ -728,13 +741,20 @@ export function App() {
       </form>}
     </header>
     {taskKind === "question" ? <section className="question-workspace" aria-busy={busy}>
-      <div className="question-overview"><strong>共 {questionSummary?.total ?? 1} 题</strong><span><i className="answered-dot" />已答 {questionSummary?.answered ?? 0}<i className="pending-dot" />待答 {(questionSummary?.total ?? 1) - (questionSummary?.answered ?? 0)}</span></div>
-      <div className="question-progress" aria-label={`已完成 ${questionSummary?.answered ?? 0} / ${questionSummary?.total ?? 1}`}><i style={{ width: `${((questionSummary?.answered ?? 0) / Math.max(1, questionSummary?.total ?? 1)) * 100}%` }} /></div>
-      <div className="question-groups">{questionGroups.map((group) => <section key={group.type}><h3>{QUESTION_TYPE_LABELS[group.type]} <small>({group.items.length})</small></h3><div className="question-grid">{group.items.map((item) => <span key={item.index} className={`${item.answered ? "answered " : ""}${item.id && skippedQuestionIds.has(item.id) ? "skipped " : ""}${item.current ? "current" : ""}`} title={`第 ${item.index} 题${item.id && skippedQuestionIds.has(item.id) ? " · 已跳过" : ""}`}>{item.index}</span>)}</div></section>)}</div>
+      <div className="question-overview"><strong>共 {totalQuestions} 题</strong><span><i className="answered-dot" />已答 {answeredQuestions}<i className="skipped-dot" />存疑 {doubtfulQuestions}<i className="pending-dot" />待答 {pendingQuestions}</span></div>
+      <div className="question-progress" aria-label={`已处理 ${completedQuestions} / ${totalQuestions}`}><i style={{ width: `${(completedQuestions / Math.max(1, totalQuestions)) * 100}%` }} /></div>
+      <div className="question-groups">{questionGroups.map((group) => <section key={group.type}><h3>{QUESTION_TYPE_LABELS[group.type]} <small>({group.items.length})</small></h3><div className="question-grid">{group.items.map((item) => {
+        const isDoubtful = Boolean(item.id && skippedQuestionIds.has(item.id));
+        const isAnswered = !isDoubtful && (item.answered || Boolean(item.id && answeredQuestionIds.has(item.id)));
+        const isProcessing = !isDoubtful && !isAnswered && autoAnswer && Boolean(item.id && item.id === answerStats.currentQuestionId);
+        const stateClass = isDoubtful ? "skipped" : isAnswered ? "answered" : isProcessing ? "processing" : "";
+        const stateLabel = isDoubtful ? " · 存疑" : isAnswered ? " · 已答完" : isProcessing ? " · 正在处理" : " · 待答";
+        return <span key={item.index} className={stateClass} title={`第 ${item.index} 题${stateLabel}`}>{item.index}</span>;
+      })}</div></section>)}</div>
       <button type="button" className={`question-start${autoAnswer ? " running" : ""}`} disabled={busy} onClick={() => void updateAutoAnswer(!autoAnswer)}>{busy ? "正在处理…" : autoAnswer ? "停止答题" : "开始答题"}</button>
-      {(answerStats.processed > 0 || answerStats.skipped > 0) && <div className="answer-stats"><span>已处理 {answerStats.processed}/{questionSummary?.total ?? answerStats.processed}</span><b>成功 {answerStats.answered}</b><em>跳过 {answerStats.skipped}</em></div>}
+      {(answerStats.processed > 0 || answerStats.skipped > 0) && <div className="answer-stats"><span>已处理 {answerStats.processed}/{totalQuestions}</span><b>已答完 {answerStats.answered}</b><em>存疑 {answerStats.skipped}</em></div>}
       <p className={`question-live-status${/失败|错误|未识别|没有|无法|低于|请先|已停止/.test(status) ? " error" : ""}`}>{status}</p>
-      {!autoAnswer && answerStats.failures.length > 0 && <details className="answer-report"><summary>查看跳过题目明细</summary><ul>{answerStats.failures.slice(0, 12).map((failure) => <li key={failure.questionId}>{failure.index ? `第 ${failure.index} 题：` : ""}{failure.reason}</li>)}</ul>{answerStats.failures.length > 12 && <small>另有 {answerStats.failures.length - 12} 题被跳过</small>}</details>}
+      {!autoAnswer && answerStats.failures.length > 0 && <details className="answer-report"><summary>查看存疑题目明细</summary><ul>{answerStats.failures.slice(0, 12).map((failure) => <li key={failure.questionId}>{failure.index ? `第 ${failure.index} 题：` : ""}{failure.reason}</li>)}</ul>{answerStats.failures.length > 12 && <small>另有 {answerStats.failures.length - 12} 题标记为存疑</small>}</details>}
       <p className="question-note">按置信度自动勾选并进入下一题，最终提交仍由你点击。</p>
     </section> : <>
       <section className="controls" aria-busy={busy}>

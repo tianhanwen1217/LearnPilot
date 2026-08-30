@@ -1,6 +1,6 @@
 import { normalizeText } from "../shared/text";
 import { effectiveConfidenceThreshold } from "../shared/confidence";
-import { answerRunSummary, emptyAnswerRunStats, isSystemicAnalysisError, recordAnswered, recordSkipped } from "../shared/answerRun";
+import { answerRunSummary, emptyAnswerRunStats, isSystemicAnalysisError, recordAnswered, recordSkipped, setCurrentQuestion } from "../shared/answerRun";
 import { getSettings } from "../shared/storage";
 import type { AnalysisResult, AnswerRunStats, DetectedTaskState, MessageResponse, QuestionPageSummary, RuntimeMessage, TabAutomationState, VideoProgress } from "../shared/types";
 import { applySuggestedOptions, clickNextQuestion, extractCurrentQuestion, focusFirstUnansweredQuestion, inspectQuestionPage } from "./question";
@@ -124,6 +124,9 @@ async function stopFrameAuto(reason: string): Promise<void> {
 async function processFrameQuestion(): Promise<void> {
   if (window.top === window || frameQuestionBusy || frameAutomation.paused || !frameAutomation.autoAnswer) return;
   if (inspectQuestionPage()?.encryptedText) return void await stopFrameAuto("检测到超星加密字体；DeepSeek 文本模型无法读取页面文字，已停止");
+  if (frameAnswerStats.processed === 0 && frameProcessedQuestionIds.size === 0) {
+    focusFirstUnansweredQuestion(frameProcessedQuestionIds);
+  }
   const extracted = extractCurrentQuestion(false);
   if (!extracted) return;
   if (frameProcessedQuestionIds.has(extracted.question.id)) {
@@ -137,13 +140,14 @@ async function processFrameQuestion(): Promise<void> {
       frameProcessedQuestionIds.add(extracted.question.id);
       const index = inspectQuestionPage()?.currentIndex;
       frameAnswerStats = recordSkipped(frameAnswerStats, extracted.question.id, reason, index);
-      reportFrameState("question", `${index ? `第 ${index} 题` : "当前题"}已跳过：${reason}；继续下一题`, true, inspectQuestionPage() ?? undefined, frameAnswerStats);
+      reportFrameState("question", `${index ? `第 ${index} 题` : "当前题"}标记存疑：${reason}；继续下一题`, true, inspectQuestionPage() ?? undefined, frameAnswerStats);
       await new Promise((resolve) => window.setTimeout(resolve, settings.autoNextDelayMs));
       if (!frameAutomation.autoAnswer || frameAutomation.paused) return;
       if (!clickNextQuestion(frameProcessedQuestionIds)) await stopFrameAuto(answerRunSummary(frameAnswerStats, inspectQuestionPage()?.total));
     };
 
-    reportFrameState("question", "题目处理中…", true, inspectQuestionPage() ?? undefined, frameAnswerStats);
+    frameAnswerStats = setCurrentQuestion(frameAnswerStats, extracted.question.id);
+    reportFrameState("question", "正在分析当前题目…", true, inspectQuestionPage() ?? undefined, frameAnswerStats);
     const response = await chrome.runtime.sendMessage({ type: "ANALYZE_QUESTION", question: extracted.question } satisfies RuntimeMessage) as MessageResponse<AnalysisResult>;
     if (!response.ok || !response.data) {
       const reason = response.error || "题目分析失败";
@@ -159,8 +163,8 @@ async function processFrameQuestion(): Promise<void> {
     const applied = applySuggestedOptions(response.data);
     if (!applied.applied || applied.missing.length) return void await skipAndContinue(`答案为 ${response.data.suggestedOptions.join("、")}，但页面选项匹配失败${applied.missing.length ? `（缺少 ${applied.missing.join("、")}）` : ""}`);
     frameProcessedQuestionIds.add(extracted.question.id);
-    frameAnswerStats = recordAnswered(frameAnswerStats);
-    reportFrameState("question", `已勾选 ${response.data.suggestedOptions.join("、")}；成功 ${frameAnswerStats.answered}，跳过 ${frameAnswerStats.skipped}`, true, inspectQuestionPage() ?? undefined, frameAnswerStats);
+    frameAnswerStats = recordAnswered(frameAnswerStats, extracted.question.id);
+    reportFrameState("question", `已勾选 ${response.data.suggestedOptions.join("、")}；已答完 ${frameAnswerStats.answered}，存疑 ${frameAnswerStats.skipped}`, true, inspectQuestionPage() ?? undefined, frameAnswerStats);
     await new Promise((resolve) => window.setTimeout(resolve, settings.autoNextDelayMs));
     if (frameAutomation.paused || !frameAutomation.autoAnswer) return;
     if (pageHasBlockingPrompt()) return void await stopFrameAuto("检测到签到、登录或验证，已暂停");

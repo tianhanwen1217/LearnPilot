@@ -42,6 +42,8 @@ export interface AnswerRunStats {
   answered: number;
   skipped: number;
   processed: number;
+  answeredQuestionIds: string[];
+  currentQuestionId?: string;
   failures: AnswerSkipRecord[];
 }
 
