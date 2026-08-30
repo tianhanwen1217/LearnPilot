@@ -100,6 +100,11 @@ export type RuntimeMessage =
   | { type: "PLAYBACK_STATE_CHANGED"; enabled: boolean }
   | { type: "SET_PLAYBACK_RATE"; rate: number }
   | { type: "PLAYBACK_RATE_CHANGED"; rate: number }
+  | { type: "SET_ACTIVE_PLAYBACK"; enabled: boolean }
+  | { type: "SET_ACTIVE_PLAYBACK_RATE"; rate: number }
+  | { type: "SET_ACTIVE_TEST_ASSIST"; enabled: boolean }
+  | { type: "SET_TEST_ASSIST"; enabled: boolean }
+  | { type: "GET_PAGE_ASSIST_STATUS" }
   | { type: "GET_ACTIVE_STATUS" }
   | { type: "CLEAR_SESSION" };
 

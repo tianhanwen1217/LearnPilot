@@ -69,12 +69,14 @@ export function App() {
   const [studyReveal, setStudyReveal] = useState(false);
   const [selectionAction, setSelectionAction] = useState<{ left: number; top: number } | null>(null);
   const autoRef = useRef(false);
+  const testModeRef = useRef(false);
   const busyRef = useRef(false);
 
   useEffect(() => {
     void Promise.all([loadSessionBank(), loadCourseState(courseId), initializePlaybackFrame(), getSettings()]).then(([entries, state, playbackState, settings]) => {
       setBank(entries);
       setTestMode(state.testMode);
+      testModeRef.current = state.testMode;
       setAutoRunning(state.testMode && state.autoRunning);
       autoRef.current = state.testMode && state.autoRunning;
       setPlayback(playbackState);
@@ -82,7 +84,7 @@ export function App() {
       setCompletedLessons(state.completedLessons ?? 0);
     });
 
-    const listener = (message: RuntimeMessage) => {
+    const listener = (message: RuntimeMessage, _sender: chrome.runtime.MessageSender, sendResponse: (response: MessageResponse) => void) => {
       if (message.type === "TOGGLE_PANEL") setOpen((value) => !value);
       if (message.type === "PLAYBACK_STATE_CHANGED") {
         setPlayback(message.enabled);
@@ -91,6 +93,18 @@ export function App() {
       if (message.type === "PLAYBACK_PROGRESS") setVideoProgress(message.progress);
       if (message.type === "LESSON_COMPLETED") setCompletedLessons(message.count);
       if (message.type === "PLAYBACK_RATE_CHANGED") setPlaybackRateState(message.rate);
+      if (message.type === "GET_PAGE_ASSIST_STATUS") {
+        sendResponse({ ok: true, data: { testMode: testModeRef.current, autoRunning: autoRef.current } });
+      }
+      if (message.type === "SET_TEST_ASSIST") {
+        testModeRef.current = message.enabled;
+        autoRef.current = message.enabled;
+        setTestMode(message.enabled);
+        setAutoRunning(message.enabled);
+        void loadCourseState(courseId).then((current) => saveCourseState({ ...current, testMode: message.enabled, autoRunning: message.enabled }));
+        setStatus(message.enabled ? "网课助手已开启自动分析、勾选与翻题" : "网课助手自动答题已关闭");
+        sendResponse({ ok: true });
+      }
     };
     chrome.runtime.onMessage.addListener(listener);
     return () => chrome.runtime.onMessage.removeListener(listener);
@@ -258,6 +272,7 @@ export function App() {
   const toggleTestMode = async () => {
     const next = !testMode;
     setTestMode(next);
+    testModeRef.current = next;
     if (!next) await stopAuto("当前课程测试模式已关闭");
     const current = await loadCourseState(courseId);
     await saveCourseState({ ...current, testMode: next, autoRunning: false });

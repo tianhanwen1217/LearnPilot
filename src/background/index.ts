@@ -1,5 +1,5 @@
 import { analyzeQuestion, testConnection } from "./analysis";
-import { clearAllExtensionData, getSettings } from "../shared/storage";
+import { clearAllExtensionData, getSettings, saveSettings } from "../shared/storage";
 import { courseSessionKey, tabPlaybackKey } from "../shared/defaults";
 import type { MessageResponse, RuntimeMessage } from "../shared/types";
 
@@ -72,11 +72,38 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
           sendResponse({ ok: true, data: rate });
           return;
         }
+        case "SET_ACTIVE_PLAYBACK": {
+          const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+          if (!tab.id) throw new Error("未找到活动标签页。");
+          await chrome.storage.session.set({ [tabPlaybackKey(tab.id)]: message.enabled });
+          await chrome.tabs.sendMessage(tab.id, { type: "PLAYBACK_STATE_CHANGED", enabled: message.enabled } satisfies RuntimeMessage).catch(() => undefined);
+          sendResponse({ ok: true });
+          return;
+        }
+        case "SET_ACTIVE_PLAYBACK_RATE": {
+          const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+          if (!tab.id) throw new Error("未找到活动标签页。");
+          const rate = Math.max(0.5, Math.min(2, message.rate));
+          const settings = await getSettings();
+          await saveSettings({ ...settings, playbackRate: rate });
+          await chrome.tabs.sendMessage(tab.id, { type: "PLAYBACK_RATE_CHANGED", rate } satisfies RuntimeMessage).catch(() => undefined);
+          sendResponse({ ok: true, data: rate });
+          return;
+        }
+        case "SET_ACTIVE_TEST_ASSIST": {
+          const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+          if (!tab.id) throw new Error("未找到活动标签页。");
+          const result = await chrome.tabs.sendMessage(tab.id, { type: "SET_TEST_ASSIST", enabled: message.enabled } satisfies RuntimeMessage, { frameId: 0 });
+          sendResponse(result as MessageResponse);
+          return;
+        }
         case "GET_ACTIVE_STATUS": {
           const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
           if (!tab.id) throw new Error("未找到活动标签页。");
           const playback = (await chrome.storage.session.get(tabPlaybackKey(tab.id)))[tabPlaybackKey(tab.id)] === true;
-          sendResponse({ ok: true, data: { tabId: tab.id, url: tab.url, playback } });
+          const settings = await getSettings();
+          const assist = await chrome.tabs.sendMessage(tab.id, { type: "GET_PAGE_ASSIST_STATUS" } satisfies RuntimeMessage, { frameId: 0 }).catch(() => null) as MessageResponse<{ testMode: boolean; autoRunning: boolean }> | null;
+          sendResponse({ ok: true, data: { tabId: tab.id, url: tab.url, playback, playbackRate: settings.playbackRate, assist: assist?.ok ? assist.data : undefined } });
           return;
         }
         case "CLEAR_SESSION": {
