@@ -338,7 +338,6 @@ export function App() {
 
   return (
     <>
-      <button className="floating-button floating-button-open" title="收起 LearnPilot" aria-label="收起 LearnPilot" onClick={() => setOpen(false)}><img src={iconUrl} alt="" /></button>
       {selectionAction && <button className="selection-action" style={selectionAction} onMouseDown={(event) => event.preventDefault()} onClick={analyzeSelection}>AI 解析</button>}
       <aside className="panel" aria-label="LearnPilot 侧边栏">
       <header className="panel-header">

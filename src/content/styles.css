@@ -374,28 +374,28 @@ footer .link:hover { background: transparent; text-decoration: underline; }
   position: fixed;
   z-index: 2147483647;
   top: 50%;
-  right: 0;
-  width: 52px;
-  height: 60px;
-  padding: 4px 6px 4px 5px;
-  border: 1px solid var(--lp-border);
-  border-right: 0;
-  border-radius: 16px 0 0 16px;
+  right: 10px;
+  width: 40px;
+  height: 40px;
+  min-height: 40px;
+  padding: 5px;
+  overflow: hidden;
+  border: 1px solid rgba(222, 214, 202, .72);
+  border-radius: 50%;
   background: var(--lp-surface);
-  box-shadow: 0 7px 20px rgba(60, 52, 42, .12);
+  box-shadow: 0 4px 12px rgba(60, 52, 42, .10);
   cursor: pointer;
   transform: translateY(-50%);
 }
 .floating-button img {
   display: block;
-  width: 40px;
-  height: 40px;
+  width: 30px;
+  height: 30px;
   margin: auto;
-  border-radius: 11px;
+  border-radius: 8px;
   object-fit: cover;
 }
-.floating-button:hover { border-color: #cabfaf; background: #faf6ef; }
-.floating-button-open { right: 436px; }
+.floating-button:hover { border-color: #cfc4b5; background: #fbf8f2; }
 
 .selection-action {
   position: fixed;
@@ -419,13 +419,5 @@ footer .link:hover { background: transparent; text-decoration: underline; }
     right: 8px;
     width: min(420px, calc(100vw - 16px));
     max-height: calc(100vh - 16px);
-  }
-  .floating-button-open {
-    top: auto;
-    right: 8px;
-    bottom: 18px;
-    border-right: 1px solid var(--lp-border);
-    border-radius: 16px;
-    transform: none;
   }
 }
