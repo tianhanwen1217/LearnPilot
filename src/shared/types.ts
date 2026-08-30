@@ -28,6 +28,7 @@ export interface QuestionPageSummary {
   answered: number;
   currentIndex: number;
   items: QuestionPageItem[];
+  encryptedText: boolean;
 }
 
 export interface SourceLink {

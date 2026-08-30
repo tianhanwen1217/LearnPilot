@@ -8,7 +8,7 @@ describe("question page summary", () => {
       { index: 2, type: "multiple", answered: false, current: true },
       { index: 3, type: "true_false", answered: false, current: false },
     ]);
-    expect(summary).toMatchObject({ total: 3, answered: 1, currentIndex: 2 });
+    expect(summary).toMatchObject({ total: 3, answered: 1, currentIndex: 2, encryptedText: false });
   });
 
   it("expands a paged quiz when the page reports its total", () => {

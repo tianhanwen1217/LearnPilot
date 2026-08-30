@@ -18,6 +18,7 @@ const STEM_SELECTORS = [
 ];
 const OPTION_SELECTORS = [
   ".answerList li", ".answer-list li", ".option", ".answer-option", ".stem_answer li",
+  ".stem_answer .answerBg", ".answerBg",
   ".Zy_ulTop li", "[class*='option-item']", "[class*='answerItem']", "[class*='radio-wrapper']",
   "[class*='checkbox-wrapper']", ".el-radio", ".el-checkbox", "label",
 ];
@@ -37,8 +38,18 @@ function stripOptionPrefix(value: string): string {
   return cleanVisibleText(value).replace(/^\s*[A-H][.、．:：)）]\s*/i, "");
 }
 
+function optionText(element: HTMLElement): string {
+  let text = cleanVisibleText(element.innerText);
+  const marker = element.querySelector<HTMLElement>(".num_option, [data-option], [class*='option-num'], [class*='optionNum']");
+  const markerText = cleanVisibleText(marker?.innerText ?? "");
+  if (markerText && /^[A-H][.、．:：)）]?$/i.test(markerText)) text = text.replace(markerText, "").trim();
+  return stripOptionPrefix(text);
+}
+
 function optionKey(element: HTMLElement, index: number): string {
-  const explicit = element.getAttribute("data-option") || element.getAttribute("data-value") || element.querySelector("input")?.getAttribute("value");
+  const marker = element.querySelector<HTMLElement>(".num_option, [data-option], [class*='option-num'], [class*='optionNum']");
+  const markerText = cleanVisibleText(marker?.innerText ?? "").match(/[A-H]/i)?.[0];
+  const explicit = markerText || marker?.getAttribute("data") || marker?.getAttribute("data-option") || element.getAttribute("data-option") || element.getAttribute("data-value") || element.querySelector("input")?.getAttribute("value");
   if (explicit && /^[A-H]$/i.test(explicit.trim())) return explicit.trim().toUpperCase();
   const textKey = cleanVisibleText(element.innerText).match(/^\s*([A-H])[.、．:：)）\s]/i)?.[1];
   return (textKey || String.fromCharCode(65 + index)).toUpperCase();
@@ -82,7 +93,7 @@ function questionDomFromContainer(container: HTMLElement): QuestionDom | null {
     });
   const options: QuestionOption[] = optionElements.slice(0, 8).map((element, index) => ({
     key: optionKey(element, index),
-    text: stripOptionPrefix(element.innerText),
+    text: optionText(element),
     elementIndex: index,
   })).filter((item) => item.text);
 
@@ -128,11 +139,11 @@ export function summarizeQuestionItems(items: QuestionPageItem[], hintedTotal = 
       answered: offset + 1 === currentIndex ? current.answered : false,
       current: offset + 1 === currentIndex,
     }));
-    return { total, answered: expanded.filter((item) => item.answered).length, currentIndex, items: expanded };
+    return { total, answered: expanded.filter((item) => item.answered).length, currentIndex, items: expanded, encryptedText: false };
   }
   const normalized = items.map((item, offset) => ({ ...item, index: offset + 1 }));
   const currentIndex = normalized.find((item) => item.current)?.index ?? Math.max(1, Math.min(total, hintedCurrent));
-  return { total, answered: normalized.filter((item) => item.answered).length, currentIndex, items: normalized };
+  return { total, answered: normalized.filter((item) => item.answered).length, currentIndex, items: normalized, encryptedText: false };
 }
 
 export function inspectQuestionPage(): QuestionPageSummary | null {
@@ -147,7 +158,10 @@ export function inspectQuestionPage(): QuestionPageSummary | null {
   }));
   const pageText = cleanVisibleText(document.body.innerText);
   const progress = pageText.match(/第\s*(\d+)\s*[\/／]\s*(\d+)\s*题/);
-  return summarizeQuestionItems(items, progress ? Number(progress[2]) : items.length, progress ? Number(progress[1]) : 1);
+  return {
+    ...summarizeQuestionItems(items, progress ? Number(progress[2]) : items.length, progress ? Number(progress[1]) : 1),
+    encryptedText: Boolean(document.querySelector(".font-cxsecret, [class*='font-cxsecret']")),
+  };
 }
 
 function parseSelectedText(selectedText: string): ExtractedQuestion | null {

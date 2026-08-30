@@ -112,6 +112,7 @@ async function stopFrameAuto(reason: string): Promise<void> {
 
 async function processFrameQuestion(): Promise<void> {
   if (window.top === window || frameQuestionBusy || frameAutomation.paused || !frameAutomation.autoAnswer) return;
+  if (inspectQuestionPage()?.encryptedText) return void await stopFrameAuto("检测到超星加密字体；DeepSeek 文本模型无法读取页面文字，已停止");
   const extracted = extractCurrentQuestion(false);
   if (!extracted) return;
   frameQuestionBusy = true;

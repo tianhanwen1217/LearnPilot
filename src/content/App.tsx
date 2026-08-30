@@ -174,6 +174,10 @@ export function App() {
           await stopAuto("检测到签到、登录或验证，已暂停");
           return;
         }
+        if (inspectQuestionPage()?.encryptedText) {
+          await stopAuto("检测到超星加密字体；DeepSeek 文本模型无法读取页面文字，已停止");
+          return;
+        }
         if (!extractCurrentQuestion(false)) return;
         const analyzed = await analyzeCurrentQuestion();
         if (!autoRef.current || assistantPausedRef.current) return;
