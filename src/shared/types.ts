@@ -86,6 +86,15 @@ export interface VideoProgress {
   paused: boolean;
 }
 
+export interface CaptureRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  viewportWidth: number;
+  viewportHeight: number;
+}
+
 export type RuntimeMessage =
   | { type: "ANALYZE_QUESTION"; question: ExtractedQuestion; bankMatch?: BankMatch }
   | { type: "TEST_CONNECTION"; settings: ExtensionSettings }
@@ -105,6 +114,13 @@ export type RuntimeMessage =
   | { type: "SET_ACTIVE_TEST_ASSIST"; enabled: boolean }
   | { type: "SET_TEST_ASSIST"; enabled: boolean }
   | { type: "GET_PAGE_ASSIST_STATUS" }
+  | { type: "START_REGION_CAPTURE" }
+  | { type: "CAPTURE_REGION"; rect: CaptureRect }
+  | { type: "CAPTURE_STATUS"; status: string }
+  | { type: "CAPTURE_RESULT"; result: AnalysisResult }
+  | { type: "CAPTURE_ERROR"; error: string }
+  | { type: "RUN_READING_TOOL"; mode: "translate" | "summarize" }
+  | { type: "ASSIST_TEXT"; mode: "translate" | "summarize"; text: string; title: string; pageUrl: string }
   | { type: "GET_ACTIVE_STATUS" }
   | { type: "CLEAR_SESSION" };
 

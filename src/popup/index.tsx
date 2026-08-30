@@ -63,12 +63,29 @@ function Popup() {
     window.close();
   };
 
+  const launchPageTool = async (message: RuntimeMessage) => {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab.id) return setStatus("未找到当前标签页");
+    try {
+      await chrome.tabs.sendMessage(tab.id, message, { frameId: 0 });
+      window.close();
+    } catch {
+      setStatus("当前页面尚未加载助手，请刷新页面后重试");
+    }
+  };
+
   return <main>
     <header><div className="mark"><img src={iconUrl} alt="" /></div><div className="brand-copy"><strong>LearnPilot</strong><span>{status}</span></div><button className="settings" title="模型设置" onClick={() => chrome.runtime.openOptionsPage()}>设置</button></header>
 
     <section className="assistant-heading">
       <div><span className="eyebrow">COURSE ASSISTANT</span><h1>网课助手</h1></div>
       <i className={supported ? "connected" : ""}>{supported ? "已连接" : "等待课程页"}</i>
+    </section>
+
+    <section className="quick-tools">
+      <button disabled={!supported} onClick={() => void launchPageTool({ type: "START_REGION_CAPTURE" })}>框选搜题</button>
+      <button disabled={!supported} onClick={() => void launchPageTool({ type: "RUN_READING_TOOL", mode: "translate" })}>翻译选中</button>
+      <button disabled={!supported} onClick={() => void launchPageTool({ type: "RUN_READING_TOOL", mode: "summarize" })}>总结网页</button>
     </section>
 
     <section className="controls" aria-busy={busy}>

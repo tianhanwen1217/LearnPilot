@@ -1,9 +1,37 @@
-import { analyzeQuestion, testConnection } from "./analysis";
+import { analyzeCapturedImage, analyzeQuestion, assistText, testConnection } from "./analysis";
 import { clearAllExtensionData, getSettings, saveSettings } from "../shared/storage";
 import { courseSessionKey, tabPlaybackKey } from "../shared/defaults";
-import type { MessageResponse, RuntimeMessage } from "../shared/types";
+import type { CaptureRect, MessageResponse, RuntimeMessage } from "../shared/types";
 
 const lastAdvanceAt = new Map<number, number>();
+
+function bytesToDataUrl(bytes: Uint8Array, mimeType: string): string {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+  return `data:${mimeType};base64,${btoa(binary)}`;
+}
+
+async function cropScreenshot(dataUrl: string, rect: CaptureRect): Promise<string> {
+  const blob = await (await fetch(dataUrl)).blob();
+  const bitmap = await createImageBitmap(blob);
+  const scaleX = bitmap.width / Math.max(1, rect.viewportWidth);
+  const scaleY = bitmap.height / Math.max(1, rect.viewportHeight);
+  const sourceX = Math.max(0, Math.round(rect.x * scaleX));
+  const sourceY = Math.max(0, Math.round(rect.y * scaleY));
+  const sourceWidth = Math.min(bitmap.width - sourceX, Math.max(1, Math.round(rect.width * scaleX)));
+  const sourceHeight = Math.min(bitmap.height - sourceY, Math.max(1, Math.round(rect.height * scaleY)));
+  if (sourceWidth < 2 || sourceHeight < 2) throw new Error("框选区域太小，请重新框选题目。");
+  const canvas = new OffscreenCanvas(sourceWidth, sourceHeight);
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("浏览器无法创建截图画布。");
+  context.drawImage(bitmap, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, sourceWidth, sourceHeight);
+  bitmap.close();
+  const output = await canvas.convertToBlob({ type: "image/jpeg", quality: 0.9 });
+  return bytesToDataUrl(new Uint8Array(await output.arrayBuffer()), output.type);
+}
 
 chrome.storage.session.setAccessLevel({ accessLevel: "TRUSTED_AND_UNTRUSTED_CONTEXTS" }).catch(() => undefined);
 
@@ -18,6 +46,30 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
         case "ANALYZE_QUESTION": {
           const settings = await getSettings();
           const result = await analyzeQuestion(message.question, settings, message.bankMatch);
+          sendResponse({ ok: true, data: result });
+          return;
+        }
+        case "CAPTURE_REGION": {
+          const tabId = sender.tab?.id;
+          const windowId = sender.tab?.windowId;
+          if (tabId == null || windowId == null) throw new Error("无法识别截图所在标签页。");
+          await chrome.tabs.sendMessage(tabId, { type: "CAPTURE_STATUS", status: "正在识别框选内容并分析…" } satisfies RuntimeMessage, { frameId: 0 }).catch(() => undefined);
+          try {
+            const screenshot = await chrome.tabs.captureVisibleTab(windowId, { format: "png" });
+            const cropped = await cropScreenshot(screenshot, message.rect);
+            const result = await analyzeCapturedImage(cropped, await getSettings());
+            await chrome.tabs.sendMessage(tabId, { type: "CAPTURE_RESULT", result } satisfies RuntimeMessage, { frameId: 0 });
+            sendResponse({ ok: true });
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            await chrome.tabs.sendMessage(tabId, { type: "CAPTURE_ERROR", error: detail } satisfies RuntimeMessage, { frameId: 0 }).catch(() => undefined);
+            sendResponse({ ok: false, error: detail });
+          }
+          return;
+        }
+        case "ASSIST_TEXT": {
+          const settings = await getSettings();
+          const result = await assistText(message.mode, message.text, message.title, message.pageUrl, settings);
           sendResponse({ ok: true, data: result });
           return;
         }

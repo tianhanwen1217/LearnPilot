@@ -64,6 +64,7 @@ export function App() {
   const [videoProgress, setVideoProgress] = useState<VideoProgress | null>(null);
   const [completedLessons, setCompletedLessons] = useState(0);
   const [manualQuestion, setManualQuestion] = useState("");
+  const [readingResult, setReadingResult] = useState<{ title: string; text: string } | null>(null);
   const [studyMode, setStudyMode] = useState(false);
   const [studyIndex, setStudyIndex] = useState(0);
   const [studyReveal, setStudyReveal] = useState(false);
@@ -105,6 +106,47 @@ export function App() {
         setStatus(message.enabled ? "网课助手已开启自动分析、勾选与翻题" : "网课助手自动答题已关闭");
         sendResponse({ ok: true });
       }
+      if (message.type === "CAPTURE_STATUS") {
+        setOpen(true);
+        setPhase("searching");
+        setQuestion(null);
+        setResult(null);
+        setReadingResult(null);
+        setStatus(message.status);
+      }
+      if (message.type === "CAPTURE_RESULT") {
+        setOpen(true);
+        setPhase("done");
+        setQuestion(null);
+        setReadingResult(null);
+        setResult(message.result);
+        setStatus("框选搜题完成");
+      }
+      if (message.type === "CAPTURE_ERROR") {
+        setOpen(true);
+        setPhase("error");
+        setStatus(message.error);
+      }
+      if (message.type === "RUN_READING_TOOL") {
+        const selected = window.getSelection()?.toString().trim() ?? "";
+        const text = message.mode === "translate" ? selected : (document.body?.innerText ?? "");
+        setOpen(true);
+        setPhase("searching");
+        setQuestion(null);
+        setResult(null);
+        setReadingResult(null);
+        setStatus(message.mode === "translate" ? "正在翻译选中文字…" : "正在总结当前网页…");
+        sendResponse({ ok: true });
+        void chrome.runtime.sendMessage({ type: "ASSIST_TEXT", mode: message.mode, text, title: document.title, pageUrl: location.href } satisfies RuntimeMessage).then((response: MessageResponse<string>) => {
+          if (!response.ok || !response.data) throw new Error(response.error || "模型没有返回内容。");
+          setReadingResult({ title: message.mode === "translate" ? "划词翻译" : "网页总结", text: response.data });
+          setPhase("done");
+          setStatus(message.mode === "translate" ? "翻译完成" : "网页总结完成");
+        }).catch((error) => {
+          setPhase("error");
+          setStatus(error instanceof Error ? error.message : String(error));
+        });
+      }
     };
     chrome.runtime.onMessage.addListener(listener);
     return () => chrome.runtime.onMessage.removeListener(listener);
@@ -123,6 +165,7 @@ export function App() {
     busyRef.current = true;
     setPhase("extracting");
     setResult(null);
+    setReadingResult(null);
     try {
       const extracted = extractCurrentQuestion(!automatic);
       if (!extracted) throw new Error("没有识别到题目。请选中题干和选项后重试。");
@@ -192,6 +235,7 @@ export function App() {
     setPhase("searching");
     setStatus("正在搜索并分析你的问题…");
     setResult(null);
+    setReadingResult(null);
     const manual: ExtractedQuestion = {
       id: stableId(stem),
       type: "short",
@@ -429,6 +473,13 @@ export function App() {
           <div className="sources"><strong>依据</strong>{result.sources.map((source, index) => source.url
             ? <a key={`${source.url}-${index}`} href={source.url} target="_blank" rel="noreferrer">{source.title}</a>
             : <span key={`${source.title}-${index}`}>{source.title}{source.score != null ? ` · ${Math.round(source.score * 100)}%` : ""}</span>)}</div>
+        </section>
+      )}
+
+      {readingResult && (
+        <section className="reading-card">
+          <div className="eyebrow">{readingResult.title}</div>
+          <p>{readingResult.text}</p>
         </section>
       )}
 
