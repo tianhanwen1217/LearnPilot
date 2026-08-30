@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { courseSessionKey } from "../shared/defaults";
 import { getSettings, saveSettings } from "../shared/storage";
 import { stableId } from "../shared/text";
@@ -8,6 +8,16 @@ import { applySuggestedOptions, clickNextQuestion, detectCourseId, extractCurren
 import { initializePlaybackFrame, setPlaybackEnabled } from "./playback";
 
 type Phase = "idle" | "extracting" | "searching" | "done" | "error";
+
+const LAUNCHER_POSITION_KEY = "learnpilot.launcherPosition";
+const LAUNCHER_EDGE_OFFSET = 30;
+
+function clampLauncherPosition(x: number, y: number): { x: number; y: number } {
+  return {
+    x: Math.max(24, Math.min(window.innerWidth - 24, x)),
+    y: Math.max(24, Math.min(window.innerHeight - 24, y)),
+  };
+}
 
 async function loadCourseState(courseId: string): Promise<CourseSessionState> {
   const key = courseSessionKey(courseId);
@@ -68,9 +78,29 @@ export function App() {
   const [studyIndex, setStudyIndex] = useState(0);
   const [studyReveal, setStudyReveal] = useState(false);
   const [selectionAction, setSelectionAction] = useState<{ left: number; top: number } | null>(null);
+  const [launcherPosition, setLauncherPosition] = useState(() => ({ x: Math.max(24, window.innerWidth - LAUNCHER_EDGE_OFFSET), y: window.innerHeight / 2 }));
+  const [launcherDragging, setLauncherDragging] = useState(false);
+  const [launcherLaunching, setLauncherLaunching] = useState(false);
   const autoRef = useRef(false);
   const testModeRef = useRef(false);
   const busyRef = useRef(false);
+  const launcherTimerRef = useRef<number | null>(null);
+  const launcherDragRef = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number; lastX: number; lastY: number; moved: boolean } | null>(null);
+
+  useEffect(() => {
+    void chrome.storage.local.get(LAUNCHER_POSITION_KEY).then((stored) => {
+      const value = stored[LAUNCHER_POSITION_KEY] as { side?: "left" | "right"; yRatio?: number } | undefined;
+      const side = value?.side === "left" ? "left" : "right";
+      const yRatio = typeof value?.yRatio === "number" ? Math.max(0, Math.min(1, value.yRatio)) : 0.5;
+      setLauncherPosition(clampLauncherPosition(side === "left" ? LAUNCHER_EDGE_OFFSET : window.innerWidth - LAUNCHER_EDGE_OFFSET, window.innerHeight * yRatio));
+    });
+    const onResize = () => setLauncherPosition((current) => clampLauncherPosition(current.x < window.innerWidth / 2 ? LAUNCHER_EDGE_OFFSET : window.innerWidth - LAUNCHER_EDGE_OFFSET, current.y));
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      if (launcherTimerRef.current != null) window.clearTimeout(launcherTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     void Promise.all([loadSessionBank(), loadCourseState(courseId), initializePlaybackFrame(), getSettings()]).then(([entries, state, playbackState, settings]) => {
@@ -344,9 +374,86 @@ export function App() {
     setStatus("临时题库已清除");
   };
 
+  const openFromLauncher = () => {
+    if (launcherLaunching || launcherTimerRef.current != null) return;
+    setLauncherLaunching(true);
+    launcherTimerRef.current = window.setTimeout(() => {
+      setLauncherLaunching(false);
+      setOpen(true);
+      launcherTimerRef.current = null;
+    }, 150);
+  };
+
+  const beginLauncherDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    launcherDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: launcherPosition.x,
+      originY: launcherPosition.y,
+      lastX: launcherPosition.x,
+      lastY: launcherPosition.y,
+      moved: false,
+    };
+    setLauncherDragging(true);
+  };
+
+  const moveLauncher = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const drag = launcherDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    const deltaX = event.clientX - drag.startX;
+    const deltaY = event.clientY - drag.startY;
+    if (Math.hypot(deltaX, deltaY) >= 4) drag.moved = true;
+    if (!drag.moved) return;
+    const next = clampLauncherPosition(drag.originX + deltaX, drag.originY + deltaY);
+    drag.lastX = next.x;
+    drag.lastY = next.y;
+    setLauncherPosition(next);
+  };
+
+  const finishLauncherDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const drag = launcherDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    launcherDragRef.current = null;
+    setLauncherDragging(false);
+    if (!drag.moved) {
+      openFromLauncher();
+      return;
+    }
+    const side = drag.lastX < window.innerWidth / 2 ? "left" : "right";
+    const snapped = clampLauncherPosition(side === "left" ? LAUNCHER_EDGE_OFFSET : window.innerWidth - LAUNCHER_EDGE_OFFSET, drag.lastY);
+    setLauncherPosition(snapped);
+    void chrome.storage.local.set({ [LAUNCHER_POSITION_KEY]: { side, yRatio: snapped.y / Math.max(1, window.innerHeight) } });
+  };
+
+  const cancelLauncherDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (launcherDragRef.current?.pointerId !== event.pointerId) return;
+    launcherDragRef.current = null;
+    setLauncherDragging(false);
+  };
+
   if (!open) {
     return <>
-      <button className="floating-button" title="打开 LearnPilot" aria-label="打开 LearnPilot" onClick={() => setOpen(true)}><img src={iconUrl} alt="" /></button>
+      <button
+        className={`floating-button${launcherDragging ? " floating-button-dragging" : ""}${launcherLaunching ? " floating-button-launching" : ""}`}
+        style={{ left: launcherPosition.x, top: launcherPosition.y }}
+        title="拖动位置，点击打开 LearnPilot"
+        aria-label="拖动位置，点击打开 LearnPilot"
+        onPointerDown={beginLauncherDrag}
+        onPointerMove={moveLauncher}
+        onPointerUp={finishLauncherDrag}
+        onPointerCancel={cancelLauncherDrag}
+        onLostPointerCapture={cancelLauncherDrag}
+        onClick={(event) => { if (event.detail === 0) openFromLauncher(); }}
+      ><img src={iconUrl} alt="" draggable={false} /></button>
       {selectionAction && <button className="selection-action" style={selectionAction} onMouseDown={(event) => event.preventDefault()} onClick={analyzeSelection}>AI 解析</button>}
     </>;
   }

@@ -22,7 +22,7 @@ button, input, textarea { font: inherit; }
 
 .panel {
   position: fixed;
-  z-index: 2147483646;
+  z-index: 2147483647;
   top: 16px;
   right: 16px;
   width: 420px;
@@ -34,6 +34,7 @@ button, input, textarea { font: inherit; }
   box-shadow: 0 12px 32px rgba(60, 52, 42, .09);
   scrollbar-color: #d7cec1 transparent;
   scrollbar-width: thin;
+  animation: lp-panel-enter 180ms ease-out;
 }
 
 .panel-header {
@@ -373,19 +374,29 @@ footer .link:hover { background: transparent; text-decoration: underline; }
 .floating-button {
   position: fixed;
   z-index: 2147483647;
-  top: 50%;
-  right: 10px;
   width: 40px;
   height: 40px;
   min-height: 40px;
   padding: 5px;
-  overflow: hidden;
+  overflow: visible;
   border: 1px solid rgba(222, 214, 202, .72);
   border-radius: 50%;
   background: var(--lp-surface);
   box-shadow: 0 4px 12px rgba(60, 52, 42, .10);
-  cursor: pointer;
-  transform: translateY(-50%);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  transform: translate(-50%, -50%);
+  transition: left 170ms ease, top 170ms ease, border-color 180ms ease, background-color 180ms ease, box-shadow 180ms ease;
+}
+.floating-button::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border: 2px solid rgba(102, 127, 168, .30);
+  border-radius: 50%;
+  opacity: 0;
+  pointer-events: none;
 }
 .floating-button img {
   display: block;
@@ -394,8 +405,31 @@ footer .link:hover { background: transparent; text-decoration: underline; }
   margin: auto;
   border-radius: 8px;
   object-fit: cover;
+  pointer-events: none;
+  -webkit-user-drag: none;
 }
-.floating-button:hover { border-color: #cfc4b5; background: #fbf8f2; }
+.floating-button:hover { border-color: #cfc4b5; background: #fbf8f2; box-shadow: 0 5px 15px rgba(60, 52, 42, .14); }
+.floating-button-dragging { cursor: grabbing; transition: none; }
+.floating-button-launching { animation: lp-launcher-press 150ms ease-out; }
+.floating-button-launching::after { animation: lp-launcher-ring 150ms ease-out; }
+
+@keyframes lp-launcher-press {
+  0% { transform: translate(-50%, -50%) scale(1); }
+  48% { transform: translate(-50%, -50%) scale(.88); }
+  100% { transform: translate(-50%, -50%) scale(1.04); }
+}
+@keyframes lp-launcher-ring {
+  0% { opacity: .8; transform: scale(.82); }
+  100% { opacity: 0; transform: scale(1.35); }
+}
+@keyframes lp-panel-enter {
+  from { opacity: 0; transform: translateX(10px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel, .floating-button-launching, .floating-button-launching::after { animation: none; }
+}
 
 .selection-action {
   position: fixed;
