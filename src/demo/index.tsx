@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import demoStyles from "./styles.css";
 import contentStyles from "../content/styles.css";
 import { App } from "../content/App";
+import { isolateExtensionHost } from "../content/host";
 
 const questions = [
   { stem: "计算机中最小的数据单位是什么？", options: ["位（bit）", "字节（Byte）", "千字节（KB）", "字（Word）"] },
@@ -45,6 +46,7 @@ createRoot(document.getElementById("root")!).render(<DemoQuiz />);
 
 const host = document.createElement("div");
 host.id = "study-companion-host";
+isolateExtensionHost(host);
 const shadow = host.attachShadow({ mode: "open" });
 const panelStyle = document.createElement("style"); panelStyle.textContent = contentStyles;
 const mount = document.createElement("div"); shadow.append(panelStyle, mount); document.documentElement.appendChild(host);

@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import styles from "./styles.css";
 import { App } from "./App";
 import { advanceToNextLesson, initializePlaybackFrame, setPlaybackEnabled, setPlaybackRate } from "./playback";
+import { isolateExtensionHost } from "./host";
 import type { RuntimeMessage } from "../shared/types";
 
 void initializePlaybackFrame();
@@ -16,6 +17,7 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage) => {
 if (window.top === window && !document.getElementById("study-companion-host")) {
   const host = document.createElement("div");
   host.id = "study-companion-host";
+  isolateExtensionHost(host);
   const shadow = host.attachShadow({ mode: "open" });
   const style = document.createElement("style");
   style.textContent = styles;
@@ -23,4 +25,8 @@ if (window.top === window && !document.getElementById("study-companion-host")) {
   shadow.append(style, mount);
   document.documentElement.appendChild(host);
   createRoot(mount).render(<React.StrictMode><App /></React.StrictMode>);
+  const hostGuard = new MutationObserver(() => {
+    if (!host.isConnected) document.documentElement.appendChild(host);
+  });
+  hostGuard.observe(document.documentElement, { childList: true });
 }

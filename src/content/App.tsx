@@ -6,17 +6,15 @@ import type { AnalysisResult, BankEntry, CourseSessionState, ExtractedQuestion, 
 import { clearSessionBank, findBankMatch, loadSessionBank, parseBankFile, saveSessionBank } from "./bank";
 import { applySuggestedOptions, clickNextQuestion, detectCourseId, extractCurrentQuestion, hasFinalSubmit } from "./question";
 import { initializePlaybackFrame, setPlaybackEnabled } from "./playback";
+import { clampLauncherPosition, launcherMovementExceeded, snapLauncherPosition, type LauncherPoint } from "./launcher";
 
 type Phase = "idle" | "extracting" | "searching" | "done" | "error";
 
 const LAUNCHER_POSITION_KEY = "learnpilot.launcherPosition";
 const LAUNCHER_EDGE_OFFSET = 30;
 
-function clampLauncherPosition(x: number, y: number): { x: number; y: number } {
-  return {
-    x: Math.max(24, Math.min(window.innerWidth - 24, x)),
-    y: Math.max(24, Math.min(window.innerHeight - 24, y)),
-  };
+function launcherViewport() {
+  return { width: window.innerWidth, height: window.innerHeight };
 }
 
 async function loadCourseState(courseId: string): Promise<CourseSessionState> {
@@ -85,22 +83,37 @@ export function App() {
   const testModeRef = useRef(false);
   const busyRef = useRef(false);
   const launcherTimerRef = useRef<number | null>(null);
+  const launcherPositionRef = useRef<LauncherPoint>(launcherPosition);
+  const launcherTouchedRef = useRef(false);
+  const launcherSuppressClickRef = useRef(false);
   const launcherDragRef = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number; lastX: number; lastY: number; moved: boolean } | null>(null);
+
+  const updateLauncherPosition = useCallback((next: LauncherPoint) => {
+    launcherPositionRef.current = next;
+    setLauncherPosition(next);
+  }, []);
+
+  const saveLauncherPosition = useCallback((point: LauncherPoint) => {
+    const snapped = snapLauncherPosition(point, launcherViewport(), LAUNCHER_EDGE_OFFSET);
+    updateLauncherPosition(snapped);
+    void chrome.storage.local.set({ [LAUNCHER_POSITION_KEY]: { side: snapped.side, yRatio: snapped.y / Math.max(1, window.innerHeight) } });
+  }, [updateLauncherPosition]);
 
   useEffect(() => {
     void chrome.storage.local.get(LAUNCHER_POSITION_KEY).then((stored) => {
+      if (launcherTouchedRef.current) return;
       const value = stored[LAUNCHER_POSITION_KEY] as { side?: "left" | "right"; yRatio?: number } | undefined;
       const side = value?.side === "left" ? "left" : "right";
       const yRatio = typeof value?.yRatio === "number" ? Math.max(0, Math.min(1, value.yRatio)) : 0.5;
-      setLauncherPosition(clampLauncherPosition(side === "left" ? LAUNCHER_EDGE_OFFSET : window.innerWidth - LAUNCHER_EDGE_OFFSET, window.innerHeight * yRatio));
+      updateLauncherPosition(clampLauncherPosition({ x: side === "left" ? LAUNCHER_EDGE_OFFSET : window.innerWidth - LAUNCHER_EDGE_OFFSET, y: window.innerHeight * yRatio }, launcherViewport()));
     });
-    const onResize = () => setLauncherPosition((current) => clampLauncherPosition(current.x < window.innerWidth / 2 ? LAUNCHER_EDGE_OFFSET : window.innerWidth - LAUNCHER_EDGE_OFFSET, current.y));
+    const onResize = () => saveLauncherPosition(launcherPositionRef.current);
     window.addEventListener("resize", onResize);
     return () => {
       window.removeEventListener("resize", onResize);
       if (launcherTimerRef.current != null) window.clearTimeout(launcherTimerRef.current);
     };
-  }, []);
+  }, [saveLauncherPosition, updateLauncherPosition]);
 
   useEffect(() => {
     void Promise.all([loadSessionBank(), loadCourseState(courseId), initializePlaybackFrame(), getSettings()]).then(([entries, state, playbackState, settings]) => {
@@ -386,17 +399,22 @@ export function App() {
 
   const beginLauncherDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
     if (event.button !== 0) return;
-    event.preventDefault();
     event.stopPropagation();
-    event.currentTarget.setPointerCapture(event.pointerId);
+    launcherTouchedRef.current = true;
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Older embedded Chromium builds can reject capture; click still works.
+    }
+    const current = launcherPositionRef.current;
     launcherDragRef.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
-      originX: launcherPosition.x,
-      originY: launcherPosition.y,
-      lastX: launcherPosition.x,
-      lastY: launcherPosition.y,
+      originX: current.x,
+      originY: current.y,
+      lastX: current.x,
+      lastY: current.y,
       moved: false,
     };
     setLauncherDragging(true);
@@ -408,41 +426,45 @@ export function App() {
     event.preventDefault();
     const deltaX = event.clientX - drag.startX;
     const deltaY = event.clientY - drag.startY;
-    if (Math.hypot(deltaX, deltaY) >= 4) drag.moved = true;
+    if (launcherMovementExceeded({ x: drag.startX, y: drag.startY }, { x: event.clientX, y: event.clientY })) drag.moved = true;
     if (!drag.moved) return;
-    const next = clampLauncherPosition(drag.originX + deltaX, drag.originY + deltaY);
+    const next = clampLauncherPosition({ x: drag.originX + deltaX, y: drag.originY + deltaY }, launcherViewport());
     drag.lastX = next.x;
     drag.lastY = next.y;
-    setLauncherPosition(next);
+    updateLauncherPosition(next);
   };
 
   const finishLauncherDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
     const drag = launcherDragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
-    event.preventDefault();
     event.stopPropagation();
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     launcherDragRef.current = null;
     setLauncherDragging(false);
     if (!drag.moved) {
       openFromLauncher();
       return;
     }
-    const side = drag.lastX < window.innerWidth / 2 ? "left" : "right";
-    const snapped = clampLauncherPosition(side === "left" ? LAUNCHER_EDGE_OFFSET : window.innerWidth - LAUNCHER_EDGE_OFFSET, drag.lastY);
-    setLauncherPosition(snapped);
-    void chrome.storage.local.set({ [LAUNCHER_POSITION_KEY]: { side, yRatio: snapped.y / Math.max(1, window.innerHeight) } });
+    launcherSuppressClickRef.current = true;
+    saveLauncherPosition({ x: drag.lastX, y: drag.lastY });
+    window.setTimeout(() => { launcherSuppressClickRef.current = false; }, 0);
   };
 
   const cancelLauncherDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (launcherDragRef.current?.pointerId !== event.pointerId) return;
+    const drag = launcherDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
     launcherDragRef.current = null;
     setLauncherDragging(false);
+    if (drag.moved) saveLauncherPosition({ x: drag.lastX, y: drag.lastY });
+  };
+
+  const loseLauncherCapture = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (launcherDragRef.current?.pointerId === event.pointerId) cancelLauncherDrag(event);
   };
 
   if (!open) {
     return <>
       <button
+        type="button"
         className={`floating-button${launcherDragging ? " floating-button-dragging" : ""}${launcherLaunching ? " floating-button-launching" : ""}`}
         style={{ left: launcherPosition.x, top: launcherPosition.y }}
         title="拖动位置，点击打开 LearnPilot"
@@ -451,8 +473,8 @@ export function App() {
         onPointerMove={moveLauncher}
         onPointerUp={finishLauncherDrag}
         onPointerCancel={cancelLauncherDrag}
-        onLostPointerCapture={cancelLauncherDrag}
-        onClick={(event) => { if (event.detail === 0) openFromLauncher(); }}
+        onLostPointerCapture={loseLauncherCapture}
+        onClick={() => { if (!launcherSuppressClickRef.current) openFromLauncher(); }}
       ><img src={iconUrl} alt="" draggable={false} /></button>
       {selectionAction && <button className="selection-action" style={selectionAction} onMouseDown={(event) => event.preventDefault()} onClick={analyzeSelection}>AI 解析</button>}
     </>;
