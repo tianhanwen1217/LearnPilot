@@ -1,5 +1,5 @@
 import { cleanVisibleText, inferQuestionType, normalizeText, stableId } from "../shared/text";
-import type { AnalysisResult, ExtractedQuestion, QuestionOption } from "../shared/types";
+import type { AnalysisResult, ExtractedQuestion, QuestionOption, QuestionPageItem, QuestionPageSummary } from "../shared/types";
 
 interface QuestionDom {
   question: ExtractedQuestion;
@@ -74,6 +74,82 @@ function optionElementsIn(container: HTMLElement): HTMLElement[] {
   return candidates.filter((element) => !candidates.some((other) => other !== element && element.contains(other)));
 }
 
+function questionDomFromContainer(container: HTMLElement): QuestionDom | null {
+  const optionElements = optionElementsIn(container)
+    .filter((element) => {
+      const text = cleanVisibleText(element.innerText);
+      return text.length > 0 && text.length < 1200 && !element.querySelector(CONTAINER_SELECTORS.join(","));
+    });
+  const options: QuestionOption[] = optionElements.slice(0, 8).map((element, index) => ({
+    key: optionKey(element, index),
+    text: stripOptionPrefix(element.innerText),
+    elementIndex: index,
+  })).filter((item) => item.text);
+
+  const stemElement = uniqueElements(STEM_SELECTORS, container)
+    .filter((element) => !optionElements.some((option) => option.contains(element) || element.contains(option)))
+    .sort((a, b) => b.innerText.length - a.innerText.length)[0];
+  let stem = cleanVisibleText(stemElement?.innerText ?? "");
+  if (!stem) {
+    stem = cleanVisibleText(container.innerText);
+    for (const option of options) stem = stem.replace(option.text, "");
+    stem = stem.slice(0, 2400).trim();
+  }
+  if (!stem) return null;
+
+  return {
+    question: {
+      id: stableId(stem + options.map((item) => item.text).join("")),
+      type: inferQuestionType(stem, options.length),
+      stem,
+      options,
+      pageUrl: location.href,
+      courseId: detectCourseId(),
+    },
+    container,
+    optionElements,
+  };
+}
+
+function containerAnswered(container: HTMLElement): boolean {
+  if (container.querySelector("input[type=radio]:checked, input[type=checkbox]:checked")) return true;
+  if ([...container.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("textarea, input:not([type]), input[type=text]")].some((input) => input.value.trim())) return true;
+  return /(?:answered|finished|completed|has-answer|is-done)/i.test(container.className.toString());
+}
+
+export function summarizeQuestionItems(items: QuestionPageItem[], hintedTotal = items.length, hintedCurrent = 1): QuestionPageSummary {
+  const total = Math.max(items.length, hintedTotal, 1);
+  if (items.length === 1 && total > 1) {
+    const currentIndex = Math.max(1, Math.min(total, hintedCurrent));
+    const current = items[0];
+    const expanded = Array.from({ length: total }, (_, offset): QuestionPageItem => ({
+      index: offset + 1,
+      type: offset + 1 === currentIndex ? current.type : "unknown",
+      answered: offset + 1 === currentIndex ? current.answered : false,
+      current: offset + 1 === currentIndex,
+    }));
+    return { total, answered: expanded.filter((item) => item.answered).length, currentIndex, items: expanded };
+  }
+  const normalized = items.map((item, offset) => ({ ...item, index: offset + 1 }));
+  const currentIndex = normalized.find((item) => item.current)?.index ?? Math.max(1, Math.min(total, hintedCurrent));
+  return { total, answered: normalized.filter((item) => item.answered).length, currentIndex, items: normalized };
+}
+
+export function inspectQuestionPage(): QuestionPageSummary | null {
+  const containers = candidateContainers();
+  if (!containers.length) return null;
+  const currentContainer = chooseContainer();
+  const items = containers.slice(0, 120).map((container, offset): QuestionPageItem => ({
+    index: offset + 1,
+    type: questionDomFromContainer(container)?.question.type ?? "unknown",
+    answered: containerAnswered(container),
+    current: container === currentContainer || /(?:active|current|\bcur\b)/i.test(container.className.toString()),
+  }));
+  const pageText = cleanVisibleText(document.body.innerText);
+  const progress = pageText.match(/第\s*(\d+)\s*[\/／]\s*(\d+)\s*题/);
+  return summarizeQuestionItems(items, progress ? Number(progress[2]) : items.length, progress ? Number(progress[1]) : 1);
+}
+
 function parseSelectedText(selectedText: string): ExtractedQuestion | null {
   const lines = cleanVisibleText(selectedText).split("\n").map((line) => line.trim()).filter(Boolean);
   if (!lines.length) return null;
@@ -114,37 +190,7 @@ export function extractCurrentQuestion(preferSelection = true): QuestionDom | nu
 
   const container = chooseContainer();
   if (!container) return null;
-  const optionElements = optionElementsIn(container)
-    .filter((element) => {
-      const text = cleanVisibleText(element.innerText);
-      return text.length > 0 && text.length < 1200 && !element.querySelector(CONTAINER_SELECTORS.join(","));
-    });
-  const options: QuestionOption[] = optionElements.slice(0, 8).map((element, index) => ({
-    key: optionKey(element, index),
-    text: stripOptionPrefix(element.innerText),
-    elementIndex: index,
-  })).filter((item) => item.text);
-
-  const stemElement = uniqueElements(STEM_SELECTORS, container)
-    .filter((element) => !optionElements.some((option) => option.contains(element) || element.contains(option)))
-    .sort((a, b) => b.innerText.length - a.innerText.length)[0];
-  let stem = cleanVisibleText(stemElement?.innerText ?? "");
-  if (!stem) {
-    stem = cleanVisibleText(container.innerText);
-    for (const option of options) stem = stem.replace(option.text, "");
-    stem = stem.slice(0, 2400).trim();
-  }
-  if (!stem) return null;
-
-  const question: ExtractedQuestion = {
-    id: stableId(stem + options.map((item) => item.text).join("")),
-    type: inferQuestionType(stem, options.length),
-    stem,
-    options,
-    pageUrl: location.href,
-    courseId: detectCourseId(),
-  };
-  return { question, container, optionElements };
+  return questionDomFromContainer(container);
 }
 
 function clickOption(element: HTMLElement): void {

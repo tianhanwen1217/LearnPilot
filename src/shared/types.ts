@@ -16,6 +16,20 @@ export interface ExtractedQuestion {
   selectedText?: string;
 }
 
+export interface QuestionPageItem {
+  index: number;
+  type: QuestionType;
+  answered: boolean;
+  current: boolean;
+}
+
+export interface QuestionPageSummary {
+  total: number;
+  answered: number;
+  currentIndex: number;
+  items: QuestionPageItem[];
+}
+
 export interface SourceLink {
   title: string;
   url?: string;
@@ -114,8 +128,8 @@ export type RuntimeMessage =
   | { type: "GET_TAB_AUTOMATION" }
   | { type: "SET_TAB_AUTOMATION"; state: TabAutomationState }
   | { type: "AUTOMATION_STATE_CHANGED"; state: TabAutomationState }
-  | { type: "FRAME_TASK_STATE"; state: DetectedTaskState; message: string }
-  | { type: "PAGE_TASK_STATE"; state: DetectedTaskState; message: string; frameId: number }
+  | { type: "FRAME_TASK_STATE"; state: DetectedTaskState; message: string; questionSummary?: QuestionPageSummary }
+  | { type: "PAGE_TASK_STATE"; state: DetectedTaskState; message: string; frameId: number; questionSummary?: QuestionPageSummary }
   | { type: "FRAME_AUTO_STOPPED"; reason: string }
   | { type: "PAGE_AUTO_STOPPED"; reason: string }
   | { type: "GET_PAGE_ASSIST_STATUS" }

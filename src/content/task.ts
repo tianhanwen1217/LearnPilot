@@ -1,7 +1,7 @@
 import { normalizeText } from "../shared/text";
 import { getSettings } from "../shared/storage";
-import type { AnalysisResult, DetectedTaskState, MessageResponse, RuntimeMessage, TabAutomationState, VideoProgress } from "../shared/types";
-import { applySuggestedOptions, clickNextQuestion, extractCurrentQuestion, hasFinalSubmit } from "./question";
+import type { AnalysisResult, DetectedTaskState, MessageResponse, QuestionPageSummary, RuntimeMessage, TabAutomationState, VideoProgress } from "../shared/types";
+import { applySuggestedOptions, clickNextQuestion, extractCurrentQuestion, hasFinalSubmit, inspectQuestionPage } from "./question";
 
 export type PageTaskKind = DetectedTaskState;
 
@@ -95,13 +95,13 @@ async function syncFrameControls(): Promise<void> {
   if (automation?.ok && automation.data) frameAutomation = automation.data;
 }
 
-function reportFrameState(state: DetectedTaskState, message: string, force = false): void {
-  const signature = `${state}:${message}`;
+function reportFrameState(state: DetectedTaskState, message: string, force = false, questionSummary?: QuestionPageSummary): void {
+  const signature = `${state}:${message}:${questionSummary?.total ?? 0}:${questionSummary?.answered ?? 0}:${questionSummary?.currentIndex ?? 0}`;
   const now = Date.now();
   if (!force && signature === lastFrameState && now - lastFrameReportAt < 4000) return;
   lastFrameState = signature;
   lastFrameReportAt = now;
-  chrome.runtime.sendMessage({ type: "FRAME_TASK_STATE", state, message } satisfies RuntimeMessage).catch(() => undefined);
+  chrome.runtime.sendMessage({ type: "FRAME_TASK_STATE", state, message, questionSummary } satisfies RuntimeMessage).catch(() => undefined);
 }
 
 async function stopFrameAuto(reason: string): Promise<void> {
@@ -145,16 +145,17 @@ async function inspectFrameTask(): Promise<void> {
   await syncFrameControls();
   if (frameAutomation.paused) return;
   const coursePage = isLikelyCoursePage() || window.top !== window;
+  const questionSummary = inspectQuestionPage();
   const state = selectPageTask({
     blocked: pageHasBlockingPrompt(),
-    question: Boolean(extractCurrentQuestion(false)),
+    question: Boolean(questionSummary),
     completed: coursePage && pageShowsTaskCompleted(),
     text: coursePage && pageHasTextTask(),
     video: localVideoProgress(),
   });
   const messages: Record<DetectedTaskState, string> = {
     blocked: "需要人工处理：签到、登录或验证",
-    question: frameAutomation.autoAnswer ? "已识别题目，准备自动处理" : "已识别题目；自动答题未开启",
+    question: frameAutomation.autoAnswer ? "题目处理中…" : `已识别 ${questionSummary?.total ?? 1} 道题，点击开始答题`,
     video_playing: "视频播放中",
     video_paused: framePlaybackEnabled ? "视频已暂停，正在尝试继续播放" : "视频已暂停",
     video_complete: framePlaybackEnabled ? "视频已完成，正在进入下一节" : "视频已完成",
@@ -162,7 +163,7 @@ async function inspectFrameTask(): Promise<void> {
     text: framePlaybackEnabled ? "文本任务处理中…" : "已识别文本任务",
     idle: "未识别到可处理的课程内容",
   };
-  reportFrameState(state, messages[state]);
+  reportFrameState(state, messages[state], false, state === "question" ? questionSummary ?? undefined : undefined);
   if (state === "blocked" && frameAutomation.autoAnswer) await stopFrameAuto(messages.blocked);
   if (state === "question") void processFrameQuestion();
   if (state === "text" && framePlaybackEnabled && Date.now() - lastFrameTextScrollAt > 1600) {

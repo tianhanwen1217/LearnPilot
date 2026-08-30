@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState, type FormEvent, type PointerE
 import { courseSessionKey } from "../shared/defaults";
 import { applyProviderPreset, detectApiProvider } from "../shared/providers";
 import { getSettings, saveSettings } from "../shared/storage";
-import type { AnalysisResult, CourseSessionState, DetectedTaskState, ExtractedQuestion, MessageResponse, RuntimeMessage, TabAutomationState, VideoProgress } from "../shared/types";
-import { applySuggestedOptions, clickNextQuestion, detectCourseId, extractCurrentQuestion, hasFinalSubmit } from "./question";
+import type { AnalysisResult, CourseSessionState, DetectedTaskState, ExtractedQuestion, MessageResponse, QuestionPageSummary, QuestionType, RuntimeMessage, TabAutomationState, VideoProgress } from "../shared/types";
+import { applySuggestedOptions, clickNextQuestion, detectCourseId, extractCurrentQuestion, hasFinalSubmit, inspectQuestionPage } from "./question";
 import { advanceToNextLesson, initializePlaybackFrame } from "./playback";
 import { clampLauncherPosition, launcherMovementExceeded, snapLauncherPosition, type LauncherPoint } from "./launcher";
 import { clampPanelOpacity, clampPanelPosition, clampPanelScale } from "./panel";
@@ -12,6 +12,14 @@ import { isLikelyCoursePage, pageHasBlockingPrompt, pageHasTextTask, pageShowsTa
 const LAUNCHER_POSITION_KEY = "learnpilot.launcherPosition";
 const PANEL_DISPLAY_KEY = "learnpilot.panelDisplay";
 const LAUNCHER_EDGE_OFFSET = 30;
+const QUESTION_TYPE_LABELS: Record<QuestionType, string> = {
+  single: "单选题",
+  multiple: "多选题",
+  true_false: "判断题",
+  fill: "填空题",
+  short: "简答题",
+  unknown: "其他题型",
+};
 
 function launcherViewport() {
   return { width: window.innerWidth, height: window.innerHeight };
@@ -60,6 +68,8 @@ export function App() {
   const [jumpMode, setJumpMode] = useState<"next" | "stay">("stay");
   const [autoAnswer, setAutoAnswer] = useState(false);
   const [assistantPaused, setAssistantPaused] = useState(false);
+  const [taskKind, setTaskKind] = useState<PageTaskKind>("idle");
+  const [questionSummary, setQuestionSummary] = useState<QuestionPageSummary | null>(null);
   const [launcherPosition, setLauncherPosition] = useState(() => ({ x: Math.max(24, window.innerWidth - LAUNCHER_EDGE_OFFSET), y: window.innerHeight / 2 }));
   const [launcherDragging, setLauncherDragging] = useState(false);
   const [launcherLaunching, setLauncherLaunching] = useState(false);
@@ -81,7 +91,7 @@ export function App() {
   const jumpModeRef = useRef<"next" | "stay">("stay");
   const taskKindRef = useRef<PageTaskKind>("idle");
   const videoSignalRef = useRef<{ progress: VideoProgress; receivedAt: number } | null>(null);
-  const remoteTaskRef = useRef<{ state: DetectedTaskState; message: string; frameId: number; receivedAt: number } | null>(null);
+  const remoteTaskRef = useRef<{ state: DetectedTaskState; message: string; frameId: number; receivedAt: number; questionSummary?: QuestionPageSummary } | null>(null);
   const lastTaskUrlRef = useRef(location.href);
   const lastAdvanceAtRef = useRef(0);
   const launcherTimerRef = useRef<number | null>(null);
@@ -262,7 +272,9 @@ export function App() {
       if (message.type === "PAGE_TASK_STATE") {
         const current = remoteTaskRef.current;
         if (message.state !== "idle" || !current || current.state === "idle" || Date.now() - current.receivedAt > 5000) {
-          remoteTaskRef.current = { state: message.state, message: message.message, frameId: message.frameId, receivedAt: Date.now() };
+          remoteTaskRef.current = { state: message.state, message: message.message, frameId: message.frameId, receivedAt: Date.now(), questionSummary: message.questionSummary };
+          setTaskKind(message.state);
+          setQuestionSummary(message.state === "question" ? message.questionSummary ?? null : null);
         }
       }
       if (message.type === "PAGE_AUTO_STOPPED") void stopAuto(message.reason);
@@ -294,14 +306,17 @@ export function App() {
           lastTaskUrlRef.current = location.href;
           videoSignalRef.current = null;
           taskKindRef.current = "idle";
+          setTaskKind("idle");
+          setQuestionSummary(null);
         }
         const recentVideo = videoSignalRef.current && Date.now() - videoSignalRef.current.receivedAt < 60000
           ? videoSignalRef.current.progress
           : undefined;
         const coursePage = isLikelyCoursePage();
+        const localQuestionSummary = inspectQuestionPage();
         let task = selectPageTask({
           blocked: pageHasBlockingPrompt(),
-          question: Boolean(extractCurrentQuestion(false)),
+          question: Boolean(localQuestionSummary),
           completed: coursePage && pageShowsTaskCompleted(),
           text: coursePage && pageHasTextTask(),
           video: recentVideo,
@@ -315,6 +330,9 @@ export function App() {
           remoteSelected = true;
         }
         taskKindRef.current = task;
+        const selectedQuestionSummary = task === "question" ? (remoteSelected ? remote?.questionSummary ?? localQuestionSummary : localQuestionSummary) : null;
+        setTaskKind(task);
+        setQuestionSummary(selectedQuestionSummary);
 
         if (task === "blocked") {
           if (autoRef.current) await stopAuto("检测到签到、登录或验证，已暂停");
@@ -330,7 +348,7 @@ export function App() {
             setStatus(busyRef.current || autoLoopRef.current ? "题目处理中…" : "已识别题目，准备自动处理");
             void runAutoLoop();
           } else {
-            setStatus(pausedReasonRef.current || "已识别题目；自动答题未开启");
+            setStatus(pausedReasonRef.current || `已识别 ${selectedQuestionSummary?.total ?? 1} 道题，点击开始答题`);
           }
           return;
         }
@@ -618,6 +636,12 @@ export function App() {
     if (launcherDragRef.current?.pointerId === event.pointerId) cancelLauncherDrag(event);
   };
 
+  const questionGroups = questionSummary
+    ? (["single", "multiple", "true_false", "fill", "short", "unknown"] as QuestionType[])
+      .map((type) => ({ type, items: questionSummary.items.filter((item) => item.type === type) }))
+      .filter((group) => group.items.length)
+    : [];
+
   if (!open) {
     return <button type="button" className={`floating-button${launcherDragging ? " floating-button-dragging" : ""}${launcherLaunching ? " floating-button-launching" : ""}`} style={{ left: launcherPosition.x, top: launcherPosition.y }} title="拖动位置，点击打开 LearnPilot" aria-label="拖动位置，点击打开 LearnPilot" onPointerDown={beginLauncherDrag} onPointerMove={moveLauncher} onPointerUp={finishLauncherDrag} onPointerCancel={cancelLauncherDrag} onLostPointerCapture={loseLauncherCapture} onClick={() => { if (!launcherSuppressClickRef.current) openFromLauncher(); }}><img src={iconUrl} alt="" draggable={false} /></button>;
   }
@@ -643,12 +667,20 @@ export function App() {
         {apiMessage && <output className={apiMessageError ? "error" : ""}>{apiMessage}</output>}
       </form>}
     </header>
-    <section className="controls" aria-busy={busy}>
-      <label><span>视频倍速</span><select disabled={busy} value={playbackRate} onChange={(event) => void updateRate(Number(event.target.value))}><option value={1}>1 倍</option><option value={1.25}>1.25 倍</option><option value={1.5}>1.5 倍</option><option value={2}>2 倍</option></select></label>
-      <label><span>跳转模式</span><select disabled={busy} value={jumpMode} onChange={(event) => void updateJumpMode(event.target.value as "next" | "stay")}><option value="next">完成后自动跳到下一节</option><option value="stay">播放完成后停留</option></select></label>
-      <label><span>自动答题</span><select disabled={busy} value={autoAnswer ? "on" : "off"} onChange={(event) => void updateAutoAnswer(event.target.value === "on")}><option value="on">是</option><option value="off">否</option></select></label>
-    </section>
-    <button type="button" className={`assistant-toggle${assistantPaused ? " paused" : ""}`} disabled={busy} onClick={() => void toggleAssistantPaused()}>{assistantPaused ? "继续" : "暂停"}</button>
-    <section className="instructions"><strong>操作说明</strong><ul><li>当前版本用于受支持的网页端在线课程，不处理电子书、随堂测验、下载文件或讨论课程。</li><li>手动进入视频或作业页面后，助手会自动连接当前页面。</li><li>视频正常播放完成后才会按跳转模式进入下一节。</li><li>自动答题会按设置的置信度勾选并翻题，最终提交仍由你点击。</li></ul></section>
+    {taskKind === "question" ? <section className="question-workspace" aria-busy={busy}>
+      <div className="question-overview"><strong>共 {questionSummary?.total ?? 1} 题</strong><span><i className="answered-dot" />已答 {questionSummary?.answered ?? 0}<i className="pending-dot" />待答 {(questionSummary?.total ?? 1) - (questionSummary?.answered ?? 0)}</span></div>
+      <div className="question-progress" aria-label={`已完成 ${questionSummary?.answered ?? 0} / ${questionSummary?.total ?? 1}`}><i style={{ width: `${((questionSummary?.answered ?? 0) / Math.max(1, questionSummary?.total ?? 1)) * 100}%` }} /></div>
+      <div className="question-groups">{questionGroups.map((group) => <section key={group.type}><h3>{QUESTION_TYPE_LABELS[group.type]} <small>({group.items.length})</small></h3><div className="question-grid">{group.items.map((item) => <span key={item.index} className={`${item.answered ? "answered " : ""}${item.current ? "current" : ""}`} title={`第 ${item.index} 题`}>{item.index}</span>)}</div></section>)}</div>
+      <button type="button" className={`question-start${autoAnswer ? " running" : ""}`} disabled={busy} onClick={() => void updateAutoAnswer(!autoAnswer)}>{busy ? "正在处理…" : autoAnswer ? "停止答题" : "开始答题"}</button>
+      <p className="question-note">按置信度自动勾选并进入下一题，最终提交仍由你点击。</p>
+    </section> : <>
+      <section className="controls" aria-busy={busy}>
+        <label><span>视频倍速</span><select disabled={busy} value={playbackRate} onChange={(event) => void updateRate(Number(event.target.value))}><option value={1}>1 倍</option><option value={1.25}>1.25 倍</option><option value={1.5}>1.5 倍</option><option value={2}>2 倍</option></select></label>
+        <label><span>跳转模式</span><select disabled={busy} value={jumpMode} onChange={(event) => void updateJumpMode(event.target.value as "next" | "stay")}><option value="next">完成后自动跳到下一节</option><option value="stay">播放完成后停留</option></select></label>
+        <label><span>自动答题</span><select disabled={busy} value={autoAnswer ? "on" : "off"} onChange={(event) => void updateAutoAnswer(event.target.value === "on")}><option value="on">是</option><option value="off">否</option></select></label>
+      </section>
+      <button type="button" className={`assistant-toggle${assistantPaused ? " paused" : ""}`} disabled={busy} onClick={() => void toggleAssistantPaused()}>{assistantPaused ? "继续" : "暂停"}</button>
+      <section className="instructions"><strong>操作说明</strong><ul><li>当前版本用于受支持的网页端在线课程，不处理电子书、随堂测验、下载文件或讨论课程。</li><li>手动进入视频或作业页面后，助手会自动连接当前页面。</li><li>视频正常播放完成后才会按跳转模式进入下一节。</li><li>自动答题会按设置的置信度勾选并翻题，最终提交仍由你点击。</li></ul></section>
+    </>}
   </aside>;
 }
