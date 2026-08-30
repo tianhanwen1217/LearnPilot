@@ -2,13 +2,14 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import styles from "./styles.css";
 import { App } from "./App";
-import { advanceToNextLesson, initializePlaybackFrame, setPlaybackEnabled } from "./playback";
+import { advanceToNextLesson, initializePlaybackFrame, setPlaybackEnabled, setPlaybackRate } from "./playback";
 import type { RuntimeMessage } from "../shared/types";
 
 void initializePlaybackFrame();
 
 chrome.runtime.onMessage.addListener((message: RuntimeMessage) => {
   if (message.type === "PLAYBACK_STATE_CHANGED") void setPlaybackEnabled(message.enabled);
+  if (message.type === "PLAYBACK_RATE_CHANGED") setPlaybackRate(message.rate);
   if (message.type === "ADVANCE_LESSON" && window.top === window) advanceToNextLesson();
 });
 

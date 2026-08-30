@@ -13,6 +13,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   autoNextDelayMs: 1800,
   maxSearchResults: 5,
   requestTimeoutMs: 45000,
+  playbackRate: 1,
   darkMode: false,
 };
 

@@ -1,9 +1,28 @@
 import { normalizeText } from "../shared/text";
 import type { MessageResponse, RuntimeMessage } from "../shared/types";
+import { getSettings } from "../shared/storage";
 import { detectCourseId, extractCurrentQuestion } from "./question";
 
 let playbackEnabled = false;
+let playbackRate = 1;
 let observer: MutationObserver | null = null;
+let lastProgressAt = 0;
+
+function reportProgress(video: HTMLVideoElement, force = false): void {
+  const now = Date.now();
+  if (!force && now - lastProgressAt < 1800) return;
+  lastProgressAt = now;
+  chrome.runtime.sendMessage({
+    type: "VIDEO_PROGRESS",
+    progress: {
+      title: document.title || "当前视频",
+      currentTime: Number.isFinite(video.currentTime) ? video.currentTime : 0,
+      duration: Number.isFinite(video.duration) ? video.duration : 0,
+      playbackRate: video.playbackRate,
+      paused: video.paused,
+    },
+  } satisfies RuntimeMessage).catch(() => undefined);
+}
 
 function visible(element: Element): element is HTMLElement {
   if (!(element instanceof HTMLElement)) return false;
@@ -15,13 +34,29 @@ function visible(element: Element): element is HTMLElement {
 function bindVideo(video: HTMLVideoElement): void {
   if (video.dataset.studyCompanionBound === "1") return;
   video.dataset.studyCompanionBound = "1";
+  video.playbackRate = playbackRate;
+  video.addEventListener("loadedmetadata", () => { video.playbackRate = playbackRate; reportProgress(video, true); });
+  video.addEventListener("timeupdate", () => reportProgress(video));
+  video.addEventListener("play", () => reportProgress(video, true));
+  video.addEventListener("pause", () => reportProgress(video, true));
   video.addEventListener("ended", () => {
+    reportProgress(video, true);
     const completed = video.ended && (!Number.isFinite(video.duration) || video.duration === 0 || video.currentTime / video.duration >= 0.98);
     if (playbackEnabled && completed) {
       chrome.runtime.sendMessage({ type: "VIDEO_ENDED", courseId: detectCourseId() } satisfies RuntimeMessage).catch(() => undefined);
     }
   });
   if (playbackEnabled && video.paused && !video.ended) video.play().catch(() => undefined);
+}
+
+export function setPlaybackRate(rate: number): void {
+  playbackRate = Math.max(0.5, Math.min(2, rate));
+  for (const video of document.querySelectorAll("video")) {
+    if (video instanceof HTMLVideoElement) {
+      video.playbackRate = playbackRate;
+      reportProgress(video, true);
+    }
+  }
 }
 
 function scanVideos(): void {
@@ -93,6 +128,7 @@ export function advanceToNextLesson(): { advanced: boolean; reason?: string } {
 }
 
 export async function initializePlaybackFrame(): Promise<boolean> {
+  playbackRate = (await getSettings()).playbackRate;
   const response = await chrome.runtime.sendMessage({ type: "GET_TAB_PLAYBACK" } satisfies RuntimeMessage) as MessageResponse<boolean>;
   playbackEnabled = response.ok && response.data === true;
   await setPlaybackEnabled(playbackEnabled);

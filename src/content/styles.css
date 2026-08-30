@@ -29,6 +29,18 @@ button.ghost { min-height: 34px; color: #64748b; background: transparent; }
 .switch input:checked + span::after { left: 21px; }
 .file-button { display: inline-flex; align-items: center; min-height: 34px; margin-top: 9px; font-size: 12px; }
 .file-button input { display: none; }
+.rate-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 10px 0 8px; }
+.rate-row button { min-height: 31px; padding: 4px; font-size: 11px; }
+.video-progress { height: 5px; margin: 8px 0 5px; overflow: hidden; border-radius: 5px; background: #e8edf4; }
+.video-progress i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #1769ff, #7357ff); transition: width .3s; }
+.playback-card small { color: #7d8998; font-size: 10px; }
+.ask-card textarea { width: 100%; min-height: 72px; margin-top: 10px; padding: 9px 10px; resize: vertical; border: 1px solid #d7dee8; border-radius: 9px; color: #263548; background: #fbfcfe; font: 12px/1.5 inherit; outline: none; }
+.ask-card textarea:focus { border-color: #315efb; box-shadow: 0 0 0 3px rgba(49,94,251,.1); }
+.ask-card .row span, .playback-card .row span, .study-card .row span { color: #8490a0; font-size: 10px; }
+.study-card p { margin: 12px 0; font-size: 13px; line-height: 1.6; }
+.study-answer { display: grid; gap: 7px; padding: 10px; border-radius: 9px; color: #1f5a45; background: #e9f8f1; font-size: 12px; line-height: 1.5; }
+.study-answer span { color: #557064; }
+.study-nav { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 9px; }
 .status { margin: 10px 12px; padding: 9px 11px; border-radius: 9px; color: #536273; background: #edf3f8; font-size: 12px; line-height: 1.45; }
 .status-searching, .status-extracting { color: #204bc7; background: #eaf0ff; }
 .status-error { color: #a92334; background: #fff0f1; }

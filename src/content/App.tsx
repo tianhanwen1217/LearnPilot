@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { courseSessionKey } from "../shared/defaults";
-import { getSettings } from "../shared/storage";
-import type { AnalysisResult, BankEntry, CourseSessionState, ExtractedQuestion, MessageResponse, RuntimeMessage } from "../shared/types";
+import { getSettings, saveSettings } from "../shared/storage";
+import { stableId } from "../shared/text";
+import type { AnalysisResult, BankEntry, CourseSessionState, ExtractedQuestion, MessageResponse, RuntimeMessage, VideoProgress } from "../shared/types";
 import { clearSessionBank, findBankMatch, loadSessionBank, parseBankFile, saveSessionBank } from "./bank";
 import { applySuggestedOptions, clickNextQuestion, detectCourseId, extractCurrentQuestion, hasFinalSubmit } from "./question";
 import { initializePlaybackFrame, setPlaybackEnabled } from "./playback";
@@ -16,6 +17,7 @@ async function loadCourseState(courseId: string): Promise<CourseSessionState> {
     testMode: false,
     autoRunning: false,
     continuousPlayback: false,
+    completedLessons: 0,
     updatedAt: Date.now(),
   };
 }
@@ -57,17 +59,26 @@ export function App() {
   const [testMode, setTestMode] = useState(false);
   const [autoRunning, setAutoRunning] = useState(false);
   const [playback, setPlayback] = useState(false);
+  const [playbackRate, setPlaybackRateState] = useState(1);
+  const [videoProgress, setVideoProgress] = useState<VideoProgress | null>(null);
+  const [completedLessons, setCompletedLessons] = useState(0);
+  const [manualQuestion, setManualQuestion] = useState("");
+  const [studyMode, setStudyMode] = useState(false);
+  const [studyIndex, setStudyIndex] = useState(0);
+  const [studyReveal, setStudyReveal] = useState(false);
   const [selectionAction, setSelectionAction] = useState<{ left: number; top: number } | null>(null);
   const autoRef = useRef(false);
   const busyRef = useRef(false);
 
   useEffect(() => {
-    void Promise.all([loadSessionBank(), loadCourseState(courseId), initializePlaybackFrame()]).then(([entries, state, playbackState]) => {
+    void Promise.all([loadSessionBank(), loadCourseState(courseId), initializePlaybackFrame(), getSettings()]).then(([entries, state, playbackState, settings]) => {
       setBank(entries);
       setTestMode(state.testMode);
       setAutoRunning(state.testMode && state.autoRunning);
       autoRef.current = state.testMode && state.autoRunning;
       setPlayback(playbackState);
+      setPlaybackRateState(settings.playbackRate);
+      setCompletedLessons(state.completedLessons ?? 0);
     });
 
     const listener = (message: RuntimeMessage) => {
@@ -76,6 +87,9 @@ export function App() {
         setPlayback(message.enabled);
         void setPlaybackEnabled(message.enabled);
       }
+      if (message.type === "PLAYBACK_PROGRESS") setVideoProgress(message.progress);
+      if (message.type === "LESSON_COMPLETED") setCompletedLessons(message.count);
+      if (message.type === "PLAYBACK_RATE_CHANGED") setPlaybackRateState(message.rate);
     };
     chrome.runtime.onMessage.addListener(listener);
     return () => chrome.runtime.onMessage.removeListener(listener);
@@ -154,6 +168,41 @@ export function App() {
     setOpen(true);
     setSelectionAction(null);
     void analyze(false);
+  };
+
+  const askManualQuestion = async () => {
+    const stem = manualQuestion.trim();
+    if (stem.length < 2 || busyRef.current) return;
+    busyRef.current = true;
+    setPhase("searching");
+    setStatus("正在搜索并分析你的问题…");
+    setResult(null);
+    const manual: ExtractedQuestion = {
+      id: stableId(stem),
+      type: "short",
+      stem,
+      options: [],
+      pageUrl: location.href,
+      courseId,
+    };
+    setQuestion(manual);
+    try {
+      const latestBank = await loadSessionBank();
+      const response = await chrome.runtime.sendMessage({
+        type: "ANALYZE_QUESTION",
+        question: manual,
+        bankMatch: findBankMatch(manual, latestBank),
+      } satisfies RuntimeMessage) as MessageResponse<AnalysisResult>;
+      if (!response.ok || !response.data) throw new Error(response.error || "分析失败。");
+      setResult(response.data);
+      setPhase("done");
+      setStatus("AI 问答完成");
+    } catch (error) {
+      setPhase("error");
+      setStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      busyRef.current = false;
+    }
   };
 
   const runAutoLoop = useCallback(async () => {
@@ -243,6 +292,14 @@ export function App() {
     setStatus(next ? "连续播放已开启；视频正常结束后进入下一节" : "连续播放已关闭");
   };
 
+  const changePlaybackRate = async (rate: number) => {
+    const settings = await getSettings();
+    await saveSettings({ ...settings, playbackRate: rate });
+    setPlaybackRateState(rate);
+    await chrome.runtime.sendMessage({ type: "SET_PLAYBACK_RATE", rate } satisfies RuntimeMessage);
+    setStatus(`播放速度已设置为 ${rate}×`);
+  };
+
   const importBank = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -251,6 +308,8 @@ export function App() {
       if (!entries.length) throw new Error("没有识别到有效题目，请检查表头是否包含“题目”和“答案”。");
       await saveSessionBank(entries);
       setBank(entries);
+      setStudyIndex(0);
+      setStudyReveal(false);
       setStatus(`已临时导入 ${entries.length} 道题，关闭浏览器后清除`);
       setPhase("idle");
     } catch (error) {
@@ -264,6 +323,8 @@ export function App() {
   const clearBank = async () => {
     await clearSessionBank();
     setBank([]);
+    setStudyMode(false);
+    setStudyIndex(0);
     setStatus("临时题库已清除");
   };
 
@@ -289,6 +350,23 @@ export function App() {
         <button onClick={() => void analyze(false)} disabled={phase === "searching" || phase === "extracting"}>分析当前题目</button>
       </section>
 
+      <section className="playback-card">
+        <div className="row between"><strong>课程播放</strong><span>已完成切换 {completedLessons} 节</span></div>
+        <div className="rate-row">
+          {[1, 1.25, 1.5, 2].map((rate) => <button key={rate} className={playbackRate === rate ? "active" : "ghost"} onClick={() => void changePlaybackRate(rate)}>{rate}×</button>)}
+        </div>
+        {videoProgress ? <>
+          <div className="video-progress"><i style={{ width: `${videoProgress.duration > 0 ? Math.min(100, videoProgress.currentTime / videoProgress.duration * 100) : 0}%` }} /></div>
+          <small>{videoProgress.paused ? "已暂停" : "播放中"} · {Math.floor(videoProgress.currentTime / 60)}:{String(Math.floor(videoProgress.currentTime % 60)).padStart(2, "0")} / {Math.floor(videoProgress.duration / 60)}:{String(Math.floor(videoProgress.duration % 60)).padStart(2, "0")}</small>
+        </> : <small>尚未检测到页面视频</small>}
+      </section>
+
+      <section className="ask-card">
+        <div className="row between"><strong>AI 问答</strong><span>题库 → 搜索 → 模型</span></div>
+        <textarea value={manualQuestion} onChange={(event) => setManualQuestion(event.target.value)} placeholder="粘贴题目或输入想问的问题…" />
+        <button className="primary full" disabled={!manualQuestion.trim() || busyRef.current} onClick={() => void askManualQuestion()}>搜索并解析</button>
+      </section>
+
       <section className="test-card">
         <div className="row between">
           <div><strong>当前课程测试模式</strong><small>仅在本次浏览器会话有效</small></div>
@@ -304,8 +382,16 @@ export function App() {
         <div className="row">
           <label className="file-button">导入题库<input type="file" accept=".xlsx,.csv,.tsv,.txt,.json" onChange={importBank} /></label>
           {bank.length > 0 && <button className="ghost" onClick={clearBank}>清除</button>}
+          {bank.length > 0 && <button className="ghost" onClick={() => { setStudyMode((value) => !value); setStudyReveal(false); }}>{studyMode ? "退出背题" : "背题模式"}</button>}
         </div>
       </section>
+
+      {studyMode && bank.length > 0 && <section className="study-card">
+        <div className="row between"><strong>背题模式</strong><span>{studyIndex + 1} / {bank.length}</span></div>
+        <p>{bank[studyIndex]?.question}</p>
+        {studyReveal ? <div className="study-answer"><b>答案：{bank[studyIndex]?.answer}</b><span>{bank[studyIndex]?.explanation || "暂无解析"}</span></div> : <button className="full" onClick={() => setStudyReveal(true)}>显示答案</button>}
+        <div className="study-nav"><button disabled={studyIndex === 0} onClick={() => { setStudyIndex((value) => value - 1); setStudyReveal(false); }}>上一题</button><button disabled={studyIndex >= bank.length - 1} onClick={() => { setStudyIndex((value) => value + 1); setStudyReveal(false); }}>下一题</button></div>
+      </section>}
 
       <div className={`status status-${phase}`}>{status}</div>
 

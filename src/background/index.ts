@@ -1,6 +1,6 @@
 import { analyzeQuestion, testConnection } from "./analysis";
 import { clearAllExtensionData, getSettings } from "../shared/storage";
-import { tabPlaybackKey } from "../shared/defaults";
+import { courseSessionKey, tabPlaybackKey } from "../shared/defaults";
 import type { MessageResponse, RuntimeMessage } from "../shared/types";
 
 const lastAdvanceAt = new Map<number, number>();
@@ -33,8 +33,20 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
           const now = Date.now();
           if (state[tabPlaybackKey(tabId)] === true && now - (lastAdvanceAt.get(tabId) ?? 0) > 3000) {
             lastAdvanceAt.set(tabId, now);
+            const key = courseSessionKey(message.courseId);
+            const session = await chrome.storage.session.get(key);
+            const current = (session[key] ?? {}) as { completedLessons?: number };
+            const count = (current.completedLessons ?? 0) + 1;
+            await chrome.storage.session.set({ [key]: { ...current, courseId: message.courseId, completedLessons: count, updatedAt: now } });
+            await chrome.tabs.sendMessage(tabId, { type: "LESSON_COMPLETED", count } satisfies RuntimeMessage).catch(() => undefined);
             await chrome.tabs.sendMessage(tabId, { type: "ADVANCE_LESSON" } satisfies RuntimeMessage);
           }
+          sendResponse({ ok: true });
+          return;
+        }
+        case "VIDEO_PROGRESS": {
+          const tabId = sender.tab?.id;
+          if (tabId != null) await chrome.tabs.sendMessage(tabId, { type: "PLAYBACK_PROGRESS", progress: message.progress } satisfies RuntimeMessage).catch(() => undefined);
           sendResponse({ ok: true });
           return;
         }
@@ -50,6 +62,14 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
           await chrome.storage.session.set({ [tabPlaybackKey(tabId)]: message.enabled });
           await chrome.tabs.sendMessage(tabId, { type: "PLAYBACK_STATE_CHANGED", enabled: message.enabled } satisfies RuntimeMessage).catch(() => undefined);
           sendResponse({ ok: true });
+          return;
+        }
+        case "SET_PLAYBACK_RATE": {
+          const tabId = sender.tab?.id;
+          if (tabId == null) throw new Error("无法识别当前标签页。");
+          const rate = Math.max(0.5, Math.min(2, message.rate));
+          await chrome.tabs.sendMessage(tabId, { type: "PLAYBACK_RATE_CHANGED", rate } satisfies RuntimeMessage).catch(() => undefined);
+          sendResponse({ ok: true, data: rate });
           return;
         }
         case "GET_ACTIVE_STATUS": {

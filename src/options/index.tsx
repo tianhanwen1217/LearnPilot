@@ -90,6 +90,7 @@ function Options() {
           <label><span>解析详细程度</span><select value={settings.analysisMode} onChange={(event) => update("analysisMode", event.target.value as ExtensionSettings["analysisMode"])}><option value="detailed">完整解析</option><option value="concise">仅建议与简析</option></select></label>
           <NumberField label="自动勾选阈值" value={settings.confidenceThreshold} min={50} max={100} suffix="%" onChange={(value) => update("confidenceThreshold", value)} />
           <NumberField label="翻到下一题前等待" value={Math.round(settings.autoNextDelayMs / 100) / 10} min={0.5} max={15} suffix="秒" onChange={(value) => update("autoNextDelayMs", value * 1000)} />
+          <label><span>视频播放速度</span><select value={settings.playbackRate} onChange={(event) => update("playbackRate", Number(event.target.value))}><option value={0.75}>0.75×</option><option value={1}>1.0×</option><option value={1.25}>1.25×</option><option value={1.5}>1.5×</option><option value={2}>2.0×</option></select></label>
           <label className="checkbox"><input type="checkbox" checked={settings.darkMode} onChange={(event) => update("darkMode", event.target.checked)} /><span>设置页深色模式</span></label>
         </div>
       </section>
