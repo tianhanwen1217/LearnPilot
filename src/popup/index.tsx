@@ -56,13 +56,6 @@ function Popup() {
     setStatus(response.ok ? (enabled ? "自动答题已开启；达到阈值后勾选并翻题" : "自动答题已关闭") : response.error || "当前页面无法开启自动答题");
   };
 
-  const togglePanel = async () => {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab.id) return;
-    await chrome.tabs.sendMessage(tab.id, { type: "TOGGLE_PANEL" } satisfies RuntimeMessage).catch(() => setStatus("当前页面尚未加载扩展，请刷新页面后重试"));
-    window.close();
-  };
-
   return <main>
     <header><div className="mark"><img src={iconUrl} alt="" /></div><div className="brand-copy"><strong>LearnPilot</strong><span>{status}</span></div><button className="settings" title="模型设置" onClick={() => chrome.runtime.openOptionsPage()}>设置</button></header>
 
@@ -74,14 +67,10 @@ function Popup() {
     <section className="controls" aria-busy={busy}>
       <label><span>视频倍速</span><select disabled={!supported || busy} value={playbackRate} onChange={(event) => void updateRate(Number(event.target.value))}><option value={1}>1 倍</option><option value={1.25}>1.25 倍</option><option value={1.5}>1.5 倍</option><option value={2}>2 倍</option></select></label>
       <label><span>跳转模式</span><select disabled={!supported || busy} value={jumpMode} onChange={(event) => void updateJumpMode(event.target.value as "next" | "stay")}><option value="next">完成后自动跳到下一节</option><option value="stay">播放完成后停留</option></select></label>
-      <label><span>自动答题</span><select disabled={!supported || busy} value={autoAnswer ? "on" : "off"} onChange={(event) => void updateAutoAnswer(event.target.value === "on")}><option value="on">开启，达到阈值后自动操作</option><option value="off">关闭</option></select></label>
+      <label><span>自动答题</span><select disabled={!supported || busy} value={autoAnswer ? "on" : "off"} onChange={(event) => void updateAutoAnswer(event.target.value === "on")}><option value="on">是</option><option value="off">否</option></select></label>
     </section>
 
-    <button className="primary" disabled={!supported} onClick={togglePanel}>打开课程侧栏</button>
-
-    <section className="instructions"><strong>操作说明</strong><ul><li>打开课程页面后，助手会连接当前标签页。</li><li>视频真实播放完成后才会进入下一节，不会拖动或伪造进度。</li><li>遇到签到、验证、低置信度或最终提交时会停止。</li></ul></section>
-
-    <div className="footer-row"><button onClick={() => chrome.tabs.create({ url: chrome.runtime.getURL("demo.html") })}>打开演示题页</button><span>最终提交由你确认</span></div>
+    <section className="instructions"><strong>操作说明</strong><ul><li>打开课程的视频或作业页面后，助手会自动连接当前标签页。</li><li>视频真实播放完成后才会进入下一节，不会拖动或伪造进度。</li><li>自动答题达到设置的置信度后才会勾选并翻题。</li><li>遇到签到、验证、低置信度或最终提交时会停止。</li></ul></section>
   </main>;
 }
 

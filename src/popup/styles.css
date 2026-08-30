@@ -120,18 +120,8 @@ select {
   cursor: pointer;
 }
 
-button.primary {
-  width: 100%;
-  min-height: 42px;
-  border-color: #667fa8;
-  color: #fff;
-  background: #667fa8;
-  font-weight: 600;
-}
-button.primary:hover { border-color: #5f769d; background: #5f769d; }
-
 .instructions {
-  margin-top: 12px;
+  margin-top: 4px;
   padding: 13px 14px;
   border: 1px solid #ebe4d9;
   border-radius: 11px;
@@ -140,20 +130,3 @@ button.primary:hover { border-color: #5f769d; background: #5f769d; }
 .instructions strong { color: #343638; font-size: 11px; }
 .instructions ul { margin: 8px 0 0; padding-left: 17px; color: #73777b; font-size: 10px; line-height: 1.65; }
 .instructions li + li { margin-top: 3px; }
-
-.footer-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding-top: 11px;
-}
-.footer-row button {
-  min-height: 30px;
-  padding: 4px 7px;
-  border-color: transparent;
-  color: #5f769d;
-  background: transparent;
-  font-size: 10px;
-}
-.footer-row span { color: #96989c; font-size: 9px; }
