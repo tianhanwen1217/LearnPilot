@@ -57,6 +57,7 @@ export function App() {
   const [testMode, setTestMode] = useState(false);
   const [autoRunning, setAutoRunning] = useState(false);
   const [playback, setPlayback] = useState(false);
+  const [selectionAction, setSelectionAction] = useState<{ left: number; top: number } | null>(null);
   const autoRef = useRef(false);
   const busyRef = useRef(false);
 
@@ -120,6 +121,40 @@ export function App() {
       busyRef.current = false;
     }
   }, []);
+
+  useEffect(() => {
+    const inspectSelection = () => {
+      window.setTimeout(() => {
+        const selection = window.getSelection();
+        const text = selection?.toString().trim() ?? "";
+        if (!selection || selection.rangeCount === 0 || text.length < 4) {
+          setSelectionAction(null);
+          return;
+        }
+        const rect = selection.getRangeAt(0).getBoundingClientRect();
+        if (!rect.width && !rect.height) return setSelectionAction(null);
+        setSelectionAction({
+          left: Math.max(8, Math.min(innerWidth - 104, rect.right + 8)),
+          top: Math.max(8, Math.min(innerHeight - 42, rect.bottom + 8)),
+        });
+      }, 0);
+    };
+    const dismiss = (event: KeyboardEvent) => { if (event.key === "Escape") setSelectionAction(null); };
+    document.addEventListener("mouseup", inspectSelection, true);
+    document.addEventListener("keyup", inspectSelection, true);
+    document.addEventListener("keydown", dismiss, true);
+    return () => {
+      document.removeEventListener("mouseup", inspectSelection, true);
+      document.removeEventListener("keyup", inspectSelection, true);
+      document.removeEventListener("keydown", dismiss, true);
+    };
+  }, []);
+
+  const analyzeSelection = () => {
+    setOpen(true);
+    setSelectionAction(null);
+    void analyze(false);
+  };
 
   const runAutoLoop = useCallback(async () => {
     if (!autoRef.current) return;
@@ -233,12 +268,16 @@ export function App() {
   };
 
   if (!open) {
-    return <button className="floating-button" title="打开 LearnPilot" aria-label="打开 LearnPilot" onClick={() => setOpen(true)}><img src={iconUrl} alt="" /></button>;
+    return <>
+      <button className="floating-button" title="打开 LearnPilot" aria-label="打开 LearnPilot" onClick={() => setOpen(true)}><img src={iconUrl} alt="" /></button>
+      {selectionAction && <button className="selection-action" style={selectionAction} onMouseDown={(event) => event.preventDefault()} onClick={analyzeSelection}>AI 解析</button>}
+    </>;
   }
 
   return (
     <>
       <button className="floating-button floating-button-open" title="收起 LearnPilot" aria-label="收起 LearnPilot" onClick={() => setOpen(false)}><img src={iconUrl} alt="" /></button>
+      {selectionAction && <button className="selection-action" style={selectionAction} onMouseDown={(event) => event.preventDefault()} onClick={analyzeSelection}>AI 解析</button>}
       <aside className="panel" aria-label="LearnPilot 侧边栏">
       <header className="panel-header">
         <div className="brand"><img src={iconUrl} alt="" /><div><strong>LearnPilot</strong><small>{courseId}</small></div></div>

@@ -10,9 +10,9 @@ function Popup() {
   useEffect(() => {
     void chrome.runtime.sendMessage({ type: "GET_ACTIVE_STATUS" } satisfies RuntimeMessage).then((response: MessageResponse<{ url?: string; playback: boolean }>) => {
       if (!response.ok) return setStatus(response.error || "无法读取当前页面");
-      const valid = Boolean(response.data?.url?.match(/^https?:\/\/[^/]*chaoxing\.com\//));
+      const valid = Boolean(response.data?.url?.match(/^https?:\/\//));
       setSupported(valid);
-      setStatus(valid ? (response.data?.playback ? "连续播放已开启" : "已连接到学习通页面") : "请先打开学习通课程页面");
+      setStatus(valid ? (response.data?.playback ? "连续播放已开启" : "已连接到当前网页") : "此浏览器内部页面不允许扩展注入");
     });
   }, []);
 

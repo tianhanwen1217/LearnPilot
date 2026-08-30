@@ -5,10 +5,6 @@
   "description": "连续播放、资料检索与授权课程测试辅助。",
   "permissions": ["storage"],
   "host_permissions": [
-    "https://*.chaoxing.com/*",
-    "http://*.chaoxing.com/*"
-  ],
-  "optional_host_permissions": [
     "https://*/*",
     "http://*/*"
   ],
@@ -34,8 +30,8 @@
   "content_scripts": [
     {
       "matches": [
-        "https://*.chaoxing.com/*",
-        "http://*.chaoxing.com/*"
+        "https://*/*",
+        "http://*/*"
       ],
       "js": ["content.js"],
       "run_at": "document_idle",
@@ -46,8 +42,8 @@
     {
       "resources": ["icons/learnpilot.png"],
       "matches": [
-        "https://*.chaoxing.com/*",
-        "http://*.chaoxing.com/*"
+        "https://*/*",
+        "http://*/*"
       ]
     }
   ]

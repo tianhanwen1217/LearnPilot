@@ -53,4 +53,6 @@ footer .link { min-height: 0; padding: 4px 0; border: 0; color: #315efb; backgro
 .floating-button img { display: block; width: 34px; height: 34px; margin: auto; border-radius: 9px; object-fit: cover; }
 .floating-button:hover { width: 48px; border-color: transparent; transform: translateY(-50%); }
 .floating-button-open { right: 376px; }
+.selection-action { position: fixed; z-index: 2147483647; min-height: 32px; padding: 5px 11px; border: 0; border-radius: 9px; color: white; background: linear-gradient(135deg, #1769ff, #7357ff); box-shadow: 0 6px 22px rgba(49, 94, 251, .32); font-size: 12px; font-weight: 700; cursor: pointer; }
+.selection-action:hover { border-color: transparent; transform: translateY(-1px); }
 @media (max-width: 620px) { .panel { top: 8px; right: 8px; width: min(360px, calc(100vw - 16px)); max-height: calc(100vh - 16px); } .floating-button-open { top: auto; right: 8px; bottom: 18px; border-radius: 14px; transform: none; } .floating-button-open:hover { transform: none; } }
