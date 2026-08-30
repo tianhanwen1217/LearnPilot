@@ -12,6 +12,9 @@ export async function getSettings(): Promise<ExtensionSettings> {
   if (settings.apiKeyStorage === "session" && !secrets.apiKey && !stored.apiKey) {
     settings.apiKeyStorage = "local";
   }
+  if (settings.searchMode === "none" && stored.confidenceThreshold === 88) {
+    settings.confidenceThreshold = 60;
+  }
   return settings;
 }
 

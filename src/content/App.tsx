@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { courseSessionKey } from "../shared/defaults";
+import { effectiveConfidenceThreshold } from "../shared/confidence";
 import { applyProviderPreset, detectApiProvider } from "../shared/providers";
 import { getSettings, saveSettings } from "../shared/storage";
 import type { AnalysisResult, CourseSessionState, DetectedTaskState, ExtractedQuestion, MessageResponse, QuestionPageSummary, QuestionType, RuntimeMessage, TabAutomationState, VideoProgress } from "../shared/types";
@@ -186,8 +187,9 @@ export function App() {
           return;
         }
         const settings = await getSettings();
-        if (analyzed.result.confidence < settings.confidenceThreshold) {
-          await stopAuto(`置信度 ${analyzed.result.confidence}% 低于阈值，已停止`);
+        const confidenceThreshold = effectiveConfidenceThreshold(settings);
+        if (analyzed.result.confidence < confidenceThreshold) {
+          await stopAuto(`置信度 ${analyzed.result.confidence}% 低于阈值 ${confidenceThreshold}%，已停止`);
           return;
         }
         if (analyzed.result.warnings.length) {
@@ -546,6 +548,8 @@ export function App() {
       const message = response.data || "连接成功";
       setApiMessage(message);
       setStatus("DeepSeek 已连接");
+      setApiMenuOpen(false);
+      setApiKeyDraft("");
     } catch (error) {
       setApiMessageError(true);
       setApiMessage(error instanceof Error ? error.message : String(error));

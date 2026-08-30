@@ -15,6 +15,7 @@ function Options() {
   const [settings, setSettings] = useState<ExtensionSettings>(DEFAULT_SETTINGS);
   const [provider, setProvider] = useState<ApiProvider>("deepseek");
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [editingApiKey, setEditingApiKey] = useState(true);
   const [message, setMessage] = useState("正在读取设置…");
   const [busy, setBusy] = useState(false);
 
@@ -25,6 +26,7 @@ function Options() {
       setSettings(value);
       setProvider(detected);
       setAdvancedOpen(detected === "custom");
+      setEditingApiKey(!value.apiKey);
       setMessage("设置已加载");
     });
   }, []);
@@ -33,6 +35,7 @@ function Options() {
   const changeProvider = (next: ApiProvider) => {
     setProvider(next);
     setSettings((current) => applyProviderPreset(current, next));
+    setEditingApiKey(true);
     if (next === "custom") setAdvancedOpen(true);
     setMessage(next === "deepseek" ? "已自动配置 DeepSeek" : next === "openai" ? "已自动配置 OpenAI" : "请在高级设置中填写兼容接口");
   };
@@ -51,6 +54,7 @@ function Options() {
       if (!settings.apiKey.trim()) throw new Error("请先填写 API Key。");
       if (!(await requestPermissions())) throw new Error("没有获得模型或搜索接口的访问权限。");
       await saveSettings(settings);
+      setEditingApiKey(false);
       setMessage(settings.apiKeyStorage === "session" ? "已保存；密钥将在浏览器关闭后清除" : "已保存到本机浏览器配置");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
@@ -65,7 +69,9 @@ function Options() {
       if (!(await requestPermissions())) throw new Error("没有获得接口访问权限。");
       const response = await chrome.runtime.sendMessage({ type: "TEST_CONNECTION", settings } satisfies RuntimeMessage) as MessageResponse<string>;
       if (!response.ok) throw new Error(response.error || "连接失败。");
-      setMessage(response.data || "连接成功");
+      await saveSettings(settings);
+      setEditingApiKey(false);
+      setMessage(`${response.data || "连接成功"}；设置已保存`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
     } finally { setBusy(false); }
@@ -77,6 +83,7 @@ function Options() {
     setSettings(DEFAULT_SETTINGS);
     setProvider("deepseek");
     setAdvancedOpen(false);
+    setEditingApiKey(true);
     setMessage("全部扩展数据已清除，已恢复 DeepSeek 默认配置");
   };
 
@@ -91,7 +98,9 @@ function Options() {
         <div className="form-grid">
           <label><span>API 服务商</span><select value={provider} onChange={(event) => changeProvider(event.target.value as ApiProvider)}><option value="deepseek">DeepSeek（默认）</option><option value="openai">OpenAI</option><option value="custom">自定义兼容接口</option></select></label>
           <label><span>当前模型</span><div className="preset-value"><b>{providerName}</b><small>{settings.model}</small></div></label>
-          <label className="wide"><span>API Key</span><input type="password" value={settings.apiKey} onChange={(event) => update("apiKey", event.target.value)} placeholder={provider === "deepseek" ? "填写 DeepSeek API Key" : "sk-…"} autoComplete="off" /></label>
+          {settings.apiKey && !editingApiKey
+            ? <div className="api-key-field wide"><span>API Key</span><div className="api-key-saved"><b>已配置 {providerName} Key</b><button type="button" onClick={() => setEditingApiKey(true)}>更换</button></div></div>
+            : <label className="wide"><span>API Key</span><input type="password" value={settings.apiKey} onChange={(event) => update("apiKey", event.target.value)} placeholder={provider === "deepseek" ? "填写 DeepSeek API Key" : "sk-…"} autoComplete="off" /></label>}
         </div>
         <p className="note">密钥不能可靠识别服务商，因此只会发送给你选中的平台。默认保存在本机浏览器扩展配置中，重新加载扩展后仍然保留。</p>
         {provider === "deepseek" && <p className="provider-tip">DeepSeek 默认使用 <code>deepseek-chat</code>。仅使用 DeepSeek Key 时不会启用网页搜索；需要联网资料可在高级设置中配置 Tavily。</p>}

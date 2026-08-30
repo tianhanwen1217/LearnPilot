@@ -1,4 +1,5 @@
 import { normalizeText } from "../shared/text";
+import { effectiveConfidenceThreshold } from "../shared/confidence";
 import { getSettings } from "../shared/storage";
 import type { AnalysisResult, DetectedTaskState, MessageResponse, QuestionPageSummary, RuntimeMessage, TabAutomationState, VideoProgress } from "../shared/types";
 import { applySuggestedOptions, clickNextQuestion, extractCurrentQuestion, hasFinalSubmit, inspectQuestionPage } from "./question";
@@ -122,7 +123,8 @@ async function processFrameQuestion(): Promise<void> {
     if (!response.ok || !response.data) return void await stopFrameAuto(response.error || "题目分析失败，已停止");
     if (frameAutomation.paused || !frameAutomation.autoAnswer) return;
     const settings = await getSettings();
-    if (response.data.confidence < settings.confidenceThreshold) return void await stopFrameAuto(`置信度 ${response.data.confidence}% 低于阈值，已停止`);
+    const confidenceThreshold = effectiveConfidenceThreshold(settings);
+    if (response.data.confidence < confidenceThreshold) return void await stopFrameAuto(`置信度 ${response.data.confidence}% 低于阈值 ${confidenceThreshold}%，已停止`);
     if (response.data.warnings.length) return void await stopFrameAuto(`模型提示：${response.data.warnings[0]}；已停止`);
     if (!response.data.suggestedOptions.length) return void await stopFrameAuto(extracted.question.options.length
       ? "模型没有返回可勾选的选项；已停止"

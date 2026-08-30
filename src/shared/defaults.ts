@@ -9,7 +9,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   searchMode: "none",
   tavilyApiKey: "",
   analysisMode: "detailed",
-  confidenceThreshold: 88,
+  confidenceThreshold: 60,
   autoNextDelayMs: 1800,
   maxSearchResults: 5,
   requestTimeoutMs: 45000,

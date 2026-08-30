@@ -243,8 +243,20 @@ export function clickNextQuestion(): boolean {
     const disabled = element.matches(":disabled") || element.getAttribute("aria-disabled") === "true";
     return !disabled && /^(下一题|下一页|下一个)$/.test(text) && !/提交|交卷|完成/.test(text);
   });
-  if (!target) return false;
-  target.click();
+  if (target) {
+    target.click();
+    return true;
+  }
+
+  const containers = candidateContainers();
+  const current = chooseContainer();
+  const currentIndex = current ? containers.indexOf(current) : -1;
+  const ordered = currentIndex >= 0
+    ? [...containers.slice(currentIndex + 1), ...containers.slice(0, currentIndex)]
+    : containers;
+  const next = ordered.find((container) => !containerAnswered(container));
+  if (!next || next === current) return false;
+  next.scrollIntoView({ behavior: "smooth", block: "center" });
   return true;
 }
 
