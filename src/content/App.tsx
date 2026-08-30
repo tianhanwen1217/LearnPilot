@@ -5,8 +5,10 @@ import type { AnalysisResult, CourseSessionState, ExtractedQuestion, MessageResp
 import { applySuggestedOptions, clickNextQuestion, detectCourseId, extractCurrentQuestion, hasFinalSubmit } from "./question";
 import { initializePlaybackFrame } from "./playback";
 import { clampLauncherPosition, launcherMovementExceeded, snapLauncherPosition, type LauncherPoint } from "./launcher";
+import { clampPanelOpacity, clampPanelPosition, clampPanelScale } from "./panel";
 
 const LAUNCHER_POSITION_KEY = "learnpilot.launcherPosition";
+const PANEL_DISPLAY_KEY = "learnpilot.panelDisplay";
 const LAUNCHER_EDGE_OFFSET = 30;
 
 function launcherViewport() {
@@ -58,6 +60,11 @@ export function App() {
   const [launcherPosition, setLauncherPosition] = useState(() => ({ x: Math.max(24, window.innerWidth - LAUNCHER_EDGE_OFFSET), y: window.innerHeight / 2 }));
   const [launcherDragging, setLauncherDragging] = useState(false);
   const [launcherLaunching, setLauncherLaunching] = useState(false);
+  const [panelPosition, setPanelPosition] = useState(() => ({ x: Math.max(8, window.innerWidth - 406), y: 16 }));
+  const [panelDragging, setPanelDragging] = useState(false);
+  const [panelOpacity, setPanelOpacity] = useState(1);
+  const [panelScale, setPanelScale] = useState(1);
+  const [displayMenuOpen, setDisplayMenuOpen] = useState(false);
   const autoRef = useRef(false);
   const busyRef = useRef(false);
   const launcherTimerRef = useRef<number | null>(null);
@@ -65,6 +72,12 @@ export function App() {
   const launcherTouchedRef = useRef(false);
   const launcherSuppressClickRef = useRef(false);
   const launcherDragRef = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number; lastX: number; lastY: number; moved: boolean } | null>(null);
+  const panelRef = useRef<HTMLElement | null>(null);
+  const panelPositionRef = useRef<LauncherPoint>(panelPosition);
+  const panelOpacityRef = useRef(panelOpacity);
+  const panelScaleRef = useRef(panelScale);
+  const panelDisplayLoadedRef = useRef(false);
+  const panelDragRef = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number; lastX: number; lastY: number } | null>(null);
 
   const updateLauncherPosition = useCallback((next: LauncherPoint) => {
     launcherPositionRef.current = next;
@@ -76,6 +89,23 @@ export function App() {
     updateLauncherPosition(snapped);
     void chrome.storage.local.set({ [LAUNCHER_POSITION_KEY]: { side: snapped.side, yRatio: snapped.y / Math.max(1, window.innerHeight) } });
   }, [updateLauncherPosition]);
+
+  const updatePanelPosition = useCallback((next: LauncherPoint) => {
+    panelPositionRef.current = next;
+    setPanelPosition(next);
+  }, []);
+
+  const panelSize = useCallback((scale = panelScaleRef.current) => ({
+    width: (panelRef.current?.offsetWidth ?? Math.min(390, Math.max(280, window.innerWidth - 32))) * scale,
+    height: (panelRef.current?.offsetHeight ?? 68) * scale,
+  }), []);
+
+  const savePanelDisplay = useCallback((point = panelPositionRef.current) => {
+    if (!panelDisplayLoadedRef.current) return;
+    const next = clampPanelPosition(point, panelSize(), launcherViewport());
+    updatePanelPosition(next);
+    void chrome.storage.local.set({ [PANEL_DISPLAY_KEY]: { x: next.x, y: next.y, opacity: panelOpacityRef.current, scale: panelScaleRef.current } });
+  }, [panelSize, updatePanelPosition]);
 
   const stopAuto = useCallback(async (message = "自动答题已关闭") => {
     autoRef.current = false;
@@ -200,6 +230,36 @@ export function App() {
     };
   }, [saveLauncherPosition, updateLauncherPosition]);
 
+  useEffect(() => {
+    void chrome.storage.local.get(PANEL_DISPLAY_KEY).then((stored) => {
+      const value = stored[PANEL_DISPLAY_KEY] as { x?: number; y?: number; opacity?: number; scale?: number } | undefined;
+      const opacity = clampPanelOpacity(typeof value?.opacity === "number" ? value.opacity : 1);
+      const scale = clampPanelScale(typeof value?.scale === "number" ? value.scale : 1);
+      const point = {
+        x: typeof value?.x === "number" ? value.x : Math.max(8, window.innerWidth - 406),
+        y: typeof value?.y === "number" ? value.y : 16,
+      };
+      panelOpacityRef.current = opacity;
+      panelScaleRef.current = scale;
+      panelDisplayLoadedRef.current = true;
+      setPanelOpacity(opacity);
+      setPanelScale(scale);
+      updatePanelPosition(clampPanelPosition(point, panelSize(scale), launcherViewport()));
+    });
+    const onResize = () => savePanelDisplay();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [panelSize, savePanelDisplay, updatePanelPosition]);
+
+  useEffect(() => {
+    if (!open) {
+      setDisplayMenuOpen(false);
+      return undefined;
+    }
+    const frame = window.requestAnimationFrame(() => savePanelDisplay());
+    return () => window.cancelAnimationFrame(frame);
+  }, [open, panelScale, savePanelDisplay]);
+
   const updateRate = async (rate: number) => {
     setPlaybackRateState(rate);
     setBusy(true);
@@ -222,6 +282,52 @@ export function App() {
   const updateAutoAnswer = async (enabled: boolean) => {
     setBusy(true);
     try { await setAutoAssist(enabled); } finally { setBusy(false); }
+  };
+
+  const updatePanelOpacity = (value: number) => {
+    const next = clampPanelOpacity(value);
+    panelOpacityRef.current = next;
+    setPanelOpacity(next);
+    savePanelDisplay();
+  };
+
+  const updatePanelScale = (value: number) => {
+    const next = clampPanelScale(value);
+    panelScaleRef.current = next;
+    setPanelScale(next);
+    window.requestAnimationFrame(() => savePanelDisplay());
+  };
+
+  const beginPanelDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    if (event.button !== 0 || (event.target as HTMLElement).closest("button, input, select")) return;
+    event.preventDefault();
+    try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* Drag continues while the pointer stays over the header. */ }
+    const current = panelPositionRef.current;
+    panelDragRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, originX: current.x, originY: current.y, lastX: current.x, lastY: current.y };
+    setPanelDragging(true);
+  };
+
+  const movePanel = (event: ReactPointerEvent<HTMLElement>) => {
+    const drag = panelDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    const next = clampPanelPosition({ x: drag.originX + event.clientX - drag.startX, y: drag.originY + event.clientY - drag.startY }, panelSize(), launcherViewport());
+    drag.lastX = next.x;
+    drag.lastY = next.y;
+    updatePanelPosition(next);
+  };
+
+  const finishPanelDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    const drag = panelDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    panelDragRef.current = null;
+    setPanelDragging(false);
+    savePanelDisplay({ x: drag.lastX, y: drag.lastY });
+  };
+
+  const cancelPanelDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    if (panelDragRef.current?.pointerId !== event.pointerId) return;
+    finishPanelDrag(event);
   };
 
   const openFromLauncher = () => {
@@ -289,10 +395,19 @@ export function App() {
     return <button type="button" className={`floating-button${launcherDragging ? " floating-button-dragging" : ""}${launcherLaunching ? " floating-button-launching" : ""}`} style={{ left: launcherPosition.x, top: launcherPosition.y }} title="拖动位置，点击打开 LearnPilot" aria-label="拖动位置，点击打开 LearnPilot" onPointerDown={beginLauncherDrag} onPointerMove={moveLauncher} onPointerUp={finishLauncherDrag} onPointerCancel={cancelLauncherDrag} onLostPointerCapture={loseLauncherCapture} onClick={() => { if (!launcherSuppressClickRef.current) openFromLauncher(); }}><img src={iconUrl} alt="" draggable={false} /></button>;
   }
 
-  return <aside className="panel" aria-label="LearnPilot 网课助手">
-    <header className="panel-header">
+  return <aside
+    ref={panelRef}
+    className={`panel${panelDragging ? " panel-dragging" : ""}`}
+    aria-label="LearnPilot 网课助手"
+    style={{ left: panelPosition.x, top: panelPosition.y, opacity: panelOpacity, transform: `scale(${panelScale})`, maxHeight: `${Math.max(240, (window.innerHeight - 32) / panelScale)}px` }}
+  >
+    <header className="panel-header" title="拖动此处移动面板" onPointerDown={beginPanelDrag} onPointerMove={movePanel} onPointerUp={finishPanelDrag} onPointerCancel={cancelPanelDrag} onLostPointerCapture={cancelPanelDrag}>
       <div className="brand"><img src={iconUrl} alt="" /><div><strong>LearnPilot</strong><small>{status}</small></div></div>
-      <div className="header-actions"><button type="button" onClick={() => chrome.runtime.openOptionsPage()}>API 设置</button><button type="button" className="close-button" onClick={() => setOpen(false)} aria-label="收起">×</button></div>
+      <div className="header-actions"><button type="button" onClick={() => setDisplayMenuOpen((value) => !value)}>显示</button><button type="button" onClick={() => chrome.runtime.openOptionsPage()}>API 设置</button><button type="button" className="close-button" onClick={() => setOpen(false)} aria-label="收起">×</button></div>
+      {displayMenuOpen && <div className="display-menu" onPointerDown={(event) => event.stopPropagation()}>
+        <label><span>透明度 <b>{Math.round(panelOpacity * 100)}%</b></span><input type="range" min="45" max="100" step="5" value={Math.round(panelOpacity * 100)} onChange={(event) => updatePanelOpacity(Number(event.target.value) / 100)} /></label>
+        <label><span>缩放 <b>{Math.round(panelScale * 100)}%</b></span><input type="range" min="75" max="125" step="5" value={Math.round(panelScale * 100)} onChange={(event) => updatePanelScale(Number(event.target.value) / 100)} /></label>
+      </div>}
     </header>
     <section className="controls" aria-busy={busy}>
       <label><span>视频倍速</span><select disabled={busy} value={playbackRate} onChange={(event) => void updateRate(Number(event.target.value))}><option value={1}>1 倍</option><option value={1.25}>1.25 倍</option><option value={1.5}>1.5 倍</option><option value={2}>2 倍</option></select></label>
