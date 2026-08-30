@@ -4,5 +4,6 @@ release/
 *.crx
 *.pem
 54f7f64b-a827-4763-b796-51ef2361e9a7.png
+picture/
 *.log
 .DS_Store

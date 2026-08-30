@@ -50,7 +50,8 @@ function Confidence({ value }: { value: number }) {
 export function App() {
   const courseId = detectCourseId();
   const iconUrl = chrome.runtime.getURL("icons/learnpilot.png");
-  const [open, setOpen] = useState(true);
+  const pageContext = `${location.hostname}${location.pathname}`;
+  const [open, setOpen] = useState(false);
   const [phase, setPhase] = useState<Phase>("idle");
   const [status, setStatus] = useState("准备就绪");
   const [question, setQuestion] = useState<ExtractedQuestion | null>(null);
@@ -341,7 +342,7 @@ export function App() {
       {selectionAction && <button className="selection-action" style={selectionAction} onMouseDown={(event) => event.preventDefault()} onClick={analyzeSelection}>AI 解析</button>}
       <aside className="panel" aria-label="LearnPilot 侧边栏">
       <header className="panel-header">
-        <div className="brand"><img src={iconUrl} alt="" /><div><strong>LearnPilot</strong><small>{courseId}</small></div></div>
+        <div className="brand"><img src={iconUrl} alt="" /><div><strong>LearnPilot</strong><small title={pageContext}>page: {pageContext}</small></div></div>
         <button className="icon-button" onClick={() => setOpen(false)} aria-label="收起">×</button>
       </header>
 
