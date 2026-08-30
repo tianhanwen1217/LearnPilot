@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { courseSessionKey } from "../shared/defaults";
+import { applyProviderPreset, detectApiProvider } from "../shared/providers";
 import { getSettings, saveSettings } from "../shared/storage";
 import type { AnalysisResult, CourseSessionState, DetectedTaskState, ExtractedQuestion, MessageResponse, RuntimeMessage, TabAutomationState, VideoProgress } from "../shared/types";
 import { applySuggestedOptions, clickNextQuestion, detectCourseId, extractCurrentQuestion, hasFinalSubmit } from "./question";
@@ -67,6 +68,11 @@ export function App() {
   const [panelOpacity, setPanelOpacity] = useState(1);
   const [panelScale, setPanelScale] = useState(1);
   const [displayMenuOpen, setDisplayMenuOpen] = useState(false);
+  const [apiMenuOpen, setApiMenuOpen] = useState(false);
+  const [apiKeyDraft, setApiKeyDraft] = useState("");
+  const [apiSaving, setApiSaving] = useState(false);
+  const [apiMessage, setApiMessage] = useState("");
+  const [apiMessageError, setApiMessageError] = useState(false);
   const autoRef = useRef(false);
   const busyRef = useRef(false);
   const autoLoopRef = useRef(false);
@@ -406,6 +412,7 @@ export function App() {
   useEffect(() => {
     if (!open) {
       setDisplayMenuOpen(false);
+      setApiMenuOpen(false);
       return undefined;
     }
     const frame = window.requestAnimationFrame(() => savePanelDisplay());
@@ -471,6 +478,51 @@ export function App() {
     panelScaleRef.current = next;
     setPanelScale(next);
     window.requestAnimationFrame(() => savePanelDisplay());
+  };
+
+  const toggleApiMenu = async () => {
+    if (apiMenuOpen) {
+      setApiMenuOpen(false);
+      return;
+    }
+    setDisplayMenuOpen(false);
+    setApiMessage("");
+    setApiMessageError(false);
+    setApiMenuOpen(true);
+    const settings = await getSettings();
+    setApiKeyDraft(detectApiProvider(settings) === "deepseek" ? settings.apiKey : "");
+  };
+
+  const saveAndTestDeepSeek = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const apiKey = apiKeyDraft.trim();
+    if (!apiKey) {
+      setApiMessageError(true);
+      setApiMessage("请先填写 DeepSeek API Key");
+      return;
+    }
+    setApiSaving(true);
+    setApiMessageError(false);
+    setApiMessage("正在连接 DeepSeek…");
+    try {
+      const current = await getSettings();
+      const settings = {
+        ...applyProviderPreset(current, "deepseek"),
+        apiKey,
+        apiKeyStorage: "session" as const,
+      };
+      await saveSettings(settings);
+      const response = await chrome.runtime.sendMessage({ type: "TEST_CONNECTION", settings } satisfies RuntimeMessage) as MessageResponse<string>;
+      if (!response.ok) throw new Error(response.error || "连接失败");
+      const message = response.data || "连接成功";
+      setApiMessage(message);
+      setStatus("DeepSeek 已连接");
+    } catch (error) {
+      setApiMessageError(true);
+      setApiMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setApiSaving(false);
+    }
   };
 
   const beginPanelDrag = (event: ReactPointerEvent<HTMLElement>) => {
@@ -578,11 +630,18 @@ export function App() {
   >
     <header className="panel-header" title="拖动此处移动面板" onPointerDown={beginPanelDrag} onPointerMove={movePanel} onPointerUp={finishPanelDrag} onPointerCancel={cancelPanelDrag} onLostPointerCapture={cancelPanelDrag}>
       <div className="brand"><img src={iconUrl} alt="" /><div><strong>LearnPilot</strong><small title={status}>{status}</small></div></div>
-      <div className="header-actions"><button type="button" onClick={() => setDisplayMenuOpen((value) => !value)}>显示</button><button type="button" onClick={() => chrome.runtime.openOptionsPage()}>API 设置</button><button type="button" className="close-button" onClick={() => setOpen(false)} aria-label="收起">×</button></div>
+      <div className="header-actions"><button type="button" aria-expanded={displayMenuOpen} onClick={() => { setApiMenuOpen(false); setDisplayMenuOpen((value) => !value); }}>显示</button><button type="button" aria-expanded={apiMenuOpen} onClick={() => void toggleApiMenu()}>API 设置</button><button type="button" className="close-button" onClick={() => setOpen(false)} aria-label="收起">×</button></div>
       {displayMenuOpen && <div className="display-menu" onPointerDown={(event) => event.stopPropagation()}>
         <label><span>透明度 <b>{Math.round(panelOpacity * 100)}%</b></span><input type="range" min="45" max="100" step="5" value={Math.round(panelOpacity * 100)} onChange={(event) => updatePanelOpacity(Number(event.target.value) / 100)} /></label>
         <label><span>缩放 <b>{Math.round(panelScale * 100)}%</b></span><input type="range" min="75" max="125" step="5" value={Math.round(panelScale * 100)} onChange={(event) => updatePanelScale(Number(event.target.value) / 100)} /></label>
       </div>}
+      {apiMenuOpen && <form className="api-menu" onSubmit={(event) => void saveAndTestDeepSeek(event)} onPointerDown={(event) => event.stopPropagation()}>
+        <label htmlFor="learnpilot-deepseek-key">DeepSeek API Key</label>
+        <input id="learnpilot-deepseek-key" type="password" autoComplete="off" spellCheck={false} placeholder="sk-..." value={apiKeyDraft} onChange={(event) => { setApiKeyDraft(event.target.value); setApiMessage(""); setApiMessageError(false); }} autoFocus />
+        <small>固定使用 DeepSeek · deepseek-chat</small>
+        <button type="submit" disabled={apiSaving}>{apiSaving ? "正在测试…" : "保存并测试"}</button>
+        {apiMessage && <output className={apiMessageError ? "error" : ""}>{apiMessage}</output>}
+      </form>}
     </header>
     <section className="controls" aria-busy={busy}>
       <label><span>视频倍速</span><select disabled={busy} value={playbackRate} onChange={(event) => void updateRate(Number(event.target.value))}><option value={1}>1 倍</option><option value={1.25}>1.25 倍</option><option value={1.5}>1.5 倍</option><option value={2}>2 倍</option></select></label>

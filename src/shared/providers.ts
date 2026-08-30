@@ -1,4 +1,4 @@
-import type { ExtensionSettings } from "../shared/types";
+import type { ExtensionSettings } from "./types";
 
 export type ApiProvider = "deepseek" | "openai" | "custom";
 

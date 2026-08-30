@@ -4,7 +4,7 @@ import styles from "./styles.css";
 import { clearAllExtensionData, getSettings, originPermissionPattern, saveSettings } from "../shared/storage";
 import type { ExtensionSettings, MessageResponse, RuntimeMessage } from "../shared/types";
 import { DEFAULT_SETTINGS } from "../shared/defaults";
-import { applyProviderPreset, detectApiProvider, migrateBlankLegacySettings, type ApiProvider } from "./providers";
+import { applyProviderPreset, detectApiProvider, migrateBlankLegacySettings, type ApiProvider } from "../shared/providers";
 
 function NumberField({ label, value, min, max, suffix, onChange }: { label: string; value: number; min: number; max: number; suffix?: string; onChange: (value: number) => void }) {
   return <label><span>{label}</span><div className="number-wrap"><input type="number" min={min} max={max} value={value} onChange={(event) => onChange(Number(event.target.value))} />{suffix && <em>{suffix}</em>}</div></label>;

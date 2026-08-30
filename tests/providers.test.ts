@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "../src/shared/defaults";
-import { applyProviderPreset, detectApiProvider, migrateBlankLegacySettings } from "../src/options/providers";
+import { applyProviderPreset, detectApiProvider, migrateBlankLegacySettings } from "../src/shared/providers";
 
 describe("API provider presets", () => {
   it("defaults to the DeepSeek chat completion endpoint", () => {
