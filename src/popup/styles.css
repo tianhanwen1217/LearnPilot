@@ -1,0 +1,15 @@
+:root { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: #18253a; }
+* { box-sizing: border-box; }
+body { width: 300px; margin: 0; background: #f5f7fa; }
+main { padding: 15px; }
+header { display: flex; align-items: center; gap: 11px; margin-bottom: 15px; }
+.mark { display: grid; place-items: center; width: 39px; height: 39px; border-radius: 12px; color: white; background: linear-gradient(135deg, #1769ff, #7357ff); font-weight: 800; }
+.mark img { width: 36px; height: 36px; border-radius: 10px; object-fit: cover; }
+header strong, header span { display: block; }
+header strong { font-size: 15px; }
+header span { margin-top: 3px; color: #7b8798; font-size: 10px; }
+button { min-height: 37px; border: 1px solid #d6dde7; border-radius: 9px; color: #35445a; background: white; cursor: pointer; }
+button.primary { width: 100%; border-color: #315efb; color: white; background: #315efb; }
+button:disabled { cursor: default; opacity: .5; }
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+p { margin: 12px 2px 0; color: #8490a0; font-size: 10px; line-height: 1.5; }

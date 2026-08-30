@@ -1,0 +1,8 @@
+node_modules/
+dist/
+release/
+*.crx
+*.pem
+54f7f64b-a827-4763-b796-51ef2361e9a7.png
+*.log
+.DS_Store

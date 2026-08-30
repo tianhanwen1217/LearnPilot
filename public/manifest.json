@@ -1,0 +1,54 @@
+{
+  "manifest_version": 3,
+  "name": "LearnPilot",
+  "version": "0.2.0",
+  "description": "连续播放、资料检索与授权课程测试辅助。",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://*.chaoxing.com/*",
+    "http://*.chaoxing.com/*"
+  ],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "icons": {
+    "16": "icons/learnpilot.png",
+    "32": "icons/learnpilot.png",
+    "48": "icons/learnpilot.png",
+    "128": "icons/learnpilot.png"
+  },
+  "action": {
+    "default_title": "LearnPilot",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/learnpilot.png",
+      "32": "icons/learnpilot.png"
+    }
+  },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.chaoxing.com/*",
+        "http://*.chaoxing.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["icons/learnpilot.png"],
+      "matches": [
+        "https://*.chaoxing.com/*",
+        "http://*.chaoxing.com/*"
+      ]
+    }
+  ]
+}
