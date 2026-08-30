@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { courseSessionKey } from "../shared/defaults";
 import { getSettings, saveSettings } from "../shared/storage";
-import type { AnalysisResult, CourseSessionState, ExtractedQuestion, MessageResponse, RuntimeMessage } from "../shared/types";
+import type { AnalysisResult, CourseSessionState, ExtractedQuestion, MessageResponse, RuntimeMessage, VideoProgress } from "../shared/types";
 import { applySuggestedOptions, clickNextQuestion, detectCourseId, extractCurrentQuestion, hasFinalSubmit } from "./question";
-import { initializePlaybackFrame } from "./playback";
+import { advanceToNextLesson, initializePlaybackFrame } from "./playback";
 import { clampLauncherPosition, launcherMovementExceeded, snapLauncherPosition, type LauncherPoint } from "./launcher";
 import { clampPanelOpacity, clampPanelPosition, clampPanelScale } from "./panel";
+import { advanceTextTask, isLikelyCoursePage, pageHasBlockingPrompt, pageHasTextTask, pageShowsTaskCompleted, selectPageTask, type PageTaskKind } from "./task";
 
 const LAUNCHER_POSITION_KEY = "learnpilot.launcherPosition";
 const PANEL_DISPLAY_KEY = "learnpilot.panelDisplay";
@@ -67,6 +68,14 @@ export function App() {
   const [displayMenuOpen, setDisplayMenuOpen] = useState(false);
   const autoRef = useRef(false);
   const busyRef = useRef(false);
+  const autoLoopRef = useRef(false);
+  const pausedReasonRef = useRef("");
+  const jumpModeRef = useRef<"next" | "stay">("stay");
+  const taskKindRef = useRef<PageTaskKind>("idle");
+  const videoSignalRef = useRef<{ progress: VideoProgress; receivedAt: number } | null>(null);
+  const lastTaskUrlRef = useRef(location.href);
+  const lastAdvanceAtRef = useRef(0);
+  const lastTextScrollAtRef = useRef(0);
   const launcherTimerRef = useRef<number | null>(null);
   const launcherPositionRef = useRef<LauncherPoint>(launcherPosition);
   const launcherTouchedRef = useRef(false);
@@ -109,6 +118,7 @@ export function App() {
 
   const stopAuto = useCallback(async (message = "自动答题已关闭") => {
     autoRef.current = false;
+    pausedReasonRef.current = message;
     setAutoAnswer(false);
     const current = await loadCourseState(courseId);
     await saveCourseState({ ...current, autoRunning: false });
@@ -136,38 +146,58 @@ export function App() {
   }, []);
 
   const runAutoLoop = useCallback(async () => {
-    if (!autoRef.current) return;
-    const analyzed = await analyzeCurrentQuestion();
-    if (!analyzed || !autoRef.current) {
-      await stopAuto("没有识别到题目或分析失败，已停止");
-      return;
+    if (!autoRef.current || autoLoopRef.current) return;
+    autoLoopRef.current = true;
+    try {
+      while (autoRef.current) {
+        if (pageHasBlockingPrompt()) {
+          await stopAuto("检测到签到、登录或验证，已暂停");
+          return;
+        }
+        if (!extractCurrentQuestion(false)) return;
+        const analyzed = await analyzeCurrentQuestion();
+        if (!analyzed || !autoRef.current) {
+          await stopAuto("题目分析失败，已停止");
+          return;
+        }
+        const settings = await getSettings();
+        if (analyzed.result.confidence < settings.confidenceThreshold) {
+          await stopAuto(`置信度 ${analyzed.result.confidence}% 低于阈值，已停止`);
+          return;
+        }
+        if (analyzed.result.warnings.length || !analyzed.result.suggestedOptions.length) {
+          await stopAuto("答案存在警告或无法匹配选项，已停止");
+          return;
+        }
+        const applied = applySuggestedOptions(analyzed.result);
+        if (!applied.applied || applied.missing.length) {
+          await stopAuto("未能完整勾选答案，已停止");
+          return;
+        }
+        setStatus(`已勾选 ${analyzed.result.suggestedOptions.join("、")}，准备下一题`);
+        await new Promise((resolve) => window.setTimeout(resolve, settings.autoNextDelayMs));
+        if (!autoRef.current) return;
+        if (pageHasBlockingPrompt()) {
+          await stopAuto("检测到签到、登录或验证，已暂停");
+          return;
+        }
+        if (!clickNextQuestion()) {
+          await stopAuto(hasFinalSubmit() ? "题目已处理完，请检查后手动提交" : "没有找到下一题，已停止");
+          return;
+        }
+        if (!await waitForQuestionChange(analyzed.question.id)) {
+          const current = extractCurrentQuestion(false)?.question.id;
+          if (!current) {
+            setStatus("任务已切换，正在重新识别页面…");
+            return;
+          }
+          await stopAuto("页面没有切换到下一题，已停止");
+          return;
+        }
+      }
+    } finally {
+      autoLoopRef.current = false;
     }
-    const settings = await getSettings();
-    if (analyzed.result.confidence < settings.confidenceThreshold) {
-      await stopAuto(`置信度 ${analyzed.result.confidence}% 低于阈值，已停止`);
-      return;
-    }
-    if (analyzed.result.warnings.length || !analyzed.result.suggestedOptions.length) {
-      await stopAuto("答案存在警告或无法匹配选项，已停止");
-      return;
-    }
-    const applied = applySuggestedOptions(analyzed.result);
-    if (!applied.applied || applied.missing.length) {
-      await stopAuto("未能完整勾选答案，已停止");
-      return;
-    }
-    setStatus(`已勾选 ${analyzed.result.suggestedOptions.join("、")}，准备下一题`);
-    await new Promise((resolve) => window.setTimeout(resolve, settings.autoNextDelayMs));
-    if (!autoRef.current) return;
-    if (!clickNextQuestion()) {
-      await stopAuto(hasFinalSubmit() ? "题目已处理完，请检查后手动提交" : "没有找到下一题，已停止");
-      return;
-    }
-    if (!await waitForQuestionChange(analyzed.question.id)) {
-      await stopAuto("页面没有切换到下一题，已停止");
-      return;
-    }
-    if (autoRef.current) void runAutoLoop();
   }, [analyzeCurrentQuestion, stopAuto]);
 
   const setAutoAssist = useCallback(async (enabled: boolean) => {
@@ -176,6 +206,7 @@ export function App() {
       return;
     }
     autoRef.current = true;
+    pausedReasonRef.current = "";
     setAutoAnswer(true);
     const current = await loadCourseState(courseId);
     await saveCourseState({ ...current, testMode: true, autoRunning: true });
@@ -184,7 +215,9 @@ export function App() {
 
   useEffect(() => {
     void Promise.all([initializePlaybackFrame(), getSettings(), loadCourseState(courseId)]).then(([playback, settings, state]) => {
-      setJumpMode(playback ? "next" : "stay");
+      const mode = playback ? "next" : "stay";
+      jumpModeRef.current = mode;
+      setJumpMode(mode);
       setPlaybackRateState(settings.playbackRate);
       const enabled = state.testMode && state.autoRunning;
       autoRef.current = enabled;
@@ -193,8 +226,13 @@ export function App() {
 
     const listener = (message: RuntimeMessage, _sender: chrome.runtime.MessageSender, sendResponse: (response: MessageResponse) => void) => {
       if (message.type === "TOGGLE_PANEL") setOpen((value) => !value);
-      if (message.type === "PLAYBACK_STATE_CHANGED") setJumpMode(message.enabled ? "next" : "stay");
+      if (message.type === "PLAYBACK_STATE_CHANGED") {
+        const mode = message.enabled ? "next" : "stay";
+        jumpModeRef.current = mode;
+        setJumpMode(mode);
+      }
       if (message.type === "PLAYBACK_RATE_CHANGED") setPlaybackRateState(message.rate);
+      if (message.type === "PLAYBACK_PROGRESS") videoSignalRef.current = { progress: message.progress, receivedAt: Date.now() };
       if (message.type === "GET_PAGE_ASSIST_STATUS") sendResponse({ ok: true, data: { testMode: autoRef.current, autoRunning: autoRef.current } });
       if (message.type === "SET_TEST_ASSIST") {
         void setAutoAssist(message.enabled).then(() => sendResponse({ ok: true })).catch((error) => {
@@ -209,10 +247,89 @@ export function App() {
   }, [courseId, setAutoAssist]);
 
   useEffect(() => {
-    if (!autoAnswer || !autoRef.current || busyRef.current) return undefined;
-    const timer = window.setTimeout(() => void runAutoLoop(), 350);
-    return () => window.clearTimeout(timer);
-  }, [autoAnswer, runAutoLoop]);
+    let disposed = false;
+    let inspecting = false;
+    const inspect = async () => {
+      if (disposed || inspecting) return;
+      inspecting = true;
+      try {
+        if (location.href !== lastTaskUrlRef.current) {
+          lastTaskUrlRef.current = location.href;
+          videoSignalRef.current = null;
+          taskKindRef.current = "idle";
+        }
+        const recentVideo = videoSignalRef.current && Date.now() - videoSignalRef.current.receivedAt < 60000
+          ? videoSignalRef.current.progress
+          : undefined;
+        const coursePage = isLikelyCoursePage();
+        const task = selectPageTask({
+          blocked: pageHasBlockingPrompt(),
+          question: Boolean(extractCurrentQuestion(false)),
+          completed: coursePage && pageShowsTaskCompleted(),
+          text: coursePage && pageHasTextTask(),
+          video: recentVideo,
+        });
+        taskKindRef.current = task;
+
+        if (task === "blocked") {
+          if (autoRef.current) await stopAuto("检测到签到、登录或验证，已暂停");
+          else setStatus("需要人工处理：签到、登录或验证");
+          return;
+        }
+        if (task === "question") {
+          if (autoRef.current) {
+            setStatus(busyRef.current || autoLoopRef.current ? "题目处理中…" : "已识别题目，准备自动处理");
+            void runAutoLoop();
+          } else {
+            setStatus(pausedReasonRef.current || "已识别题目；自动答题未开启");
+          }
+          return;
+        }
+        if (task === "video_playing") {
+          setStatus(`视频播放中 · ${recentVideo?.playbackRate ?? playbackRate}×`);
+          return;
+        }
+        if (task === "video_paused") {
+          setStatus(jumpModeRef.current === "next" ? "视频已暂停，正在尝试继续播放" : "视频已暂停");
+          return;
+        }
+        if (task === "video_complete") {
+          setStatus(jumpModeRef.current === "next" ? "视频已完成，正在进入下一节" : "视频已完成");
+          return;
+        }
+        if (task === "completed") {
+          setStatus(jumpModeRef.current === "next" ? "当前任务已完成，正在进入下一节" : "当前任务已完成");
+          if (jumpModeRef.current === "next" && Date.now() - lastAdvanceAtRef.current > 4000) {
+            lastAdvanceAtRef.current = Date.now();
+            const result = advanceToNextLesson();
+            if (!result.advanced && result.reason) setStatus(result.reason);
+          }
+          return;
+        }
+        if (task === "text") {
+          if (jumpModeRef.current === "next") {
+            if (Date.now() - lastTextScrollAtRef.current > 1600) {
+              lastTextScrollAtRef.current = Date.now();
+              const result = advanceTextTask();
+              setStatus(result === "bottom" ? "文本内容已浏览，等待页面确认完成" : "文本任务处理中…");
+            }
+          } else {
+            setStatus("已识别文本任务");
+          }
+          return;
+        }
+        setStatus("正在等待课程任务…");
+      } finally {
+        inspecting = false;
+      }
+    };
+    void inspect();
+    const timer = window.setInterval(() => void inspect(), 1000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [autoAnswer, playbackRate, runAutoLoop, stopAuto]);
 
   useEffect(() => {
     void chrome.storage.local.get(LAUNCHER_POSITION_KEY).then((stored) => {
@@ -271,11 +388,16 @@ export function App() {
   };
 
   const updateJumpMode = async (mode: "next" | "stay") => {
+    jumpModeRef.current = mode;
     setJumpMode(mode);
     setBusy(true);
     const response = await chrome.runtime.sendMessage({ type: "SET_TAB_PLAYBACK", enabled: mode === "next" } satisfies RuntimeMessage) as MessageResponse;
     setBusy(false);
-    if (!response.ok) setJumpMode(mode === "next" ? "stay" : "next");
+    if (!response.ok) {
+      const previous = mode === "next" ? "stay" : "next";
+      jumpModeRef.current = previous;
+      setJumpMode(previous);
+    }
     setStatus(response.ok ? (mode === "next" ? "完成后会自动跳到下一节" : "播放完成后会停留") : response.error || "跳转模式设置失败");
   };
 
