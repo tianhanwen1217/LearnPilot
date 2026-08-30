@@ -17,6 +17,7 @@ export interface ExtractedQuestion {
 }
 
 export interface QuestionPageItem {
+  id?: string;
   index: number;
   type: QuestionType;
   answered: boolean;
@@ -29,6 +30,19 @@ export interface QuestionPageSummary {
   currentIndex: number;
   items: QuestionPageItem[];
   encryptedText: boolean;
+}
+
+export interface AnswerSkipRecord {
+  questionId: string;
+  index?: number;
+  reason: string;
+}
+
+export interface AnswerRunStats {
+  answered: number;
+  skipped: number;
+  processed: number;
+  failures: AnswerSkipRecord[];
 }
 
 export interface SourceLink {
@@ -129,10 +143,10 @@ export type RuntimeMessage =
   | { type: "GET_TAB_AUTOMATION" }
   | { type: "SET_TAB_AUTOMATION"; state: TabAutomationState }
   | { type: "AUTOMATION_STATE_CHANGED"; state: TabAutomationState }
-  | { type: "FRAME_TASK_STATE"; state: DetectedTaskState; message: string; questionSummary?: QuestionPageSummary }
-  | { type: "PAGE_TASK_STATE"; state: DetectedTaskState; message: string; frameId: number; questionSummary?: QuestionPageSummary }
-  | { type: "FRAME_AUTO_STOPPED"; reason: string }
-  | { type: "PAGE_AUTO_STOPPED"; reason: string }
+  | { type: "FRAME_TASK_STATE"; state: DetectedTaskState; message: string; questionSummary?: QuestionPageSummary; answerStats?: AnswerRunStats }
+  | { type: "PAGE_TASK_STATE"; state: DetectedTaskState; message: string; frameId: number; questionSummary?: QuestionPageSummary; answerStats?: AnswerRunStats }
+  | { type: "FRAME_AUTO_STOPPED"; reason: string; answerStats?: AnswerRunStats }
+  | { type: "PAGE_AUTO_STOPPED"; reason: string; answerStats?: AnswerRunStats }
   | { type: "GET_PAGE_ASSIST_STATUS" }
   | { type: "GET_ACTIVE_STATUS" }
   | { type: "CLEAR_SESSION" };

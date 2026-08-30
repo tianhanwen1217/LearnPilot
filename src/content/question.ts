@@ -151,6 +151,7 @@ export function inspectQuestionPage(): QuestionPageSummary | null {
   if (!containers.length) return null;
   const currentContainer = chooseContainer();
   const items = containers.slice(0, 120).map((container, offset): QuestionPageItem => ({
+    id: questionDomFromContainer(container)?.question.id,
     index: offset + 1,
     type: questionDomFromContainer(container)?.question.type ?? "unknown",
     answered: containerAnswered(container),
@@ -236,7 +237,7 @@ function buttonText(element: HTMLElement): string {
   return normalizeText(element.innerText || element.getAttribute("value") || element.getAttribute("title") || "");
 }
 
-export function clickNextQuestion(): boolean {
+export function clickNextQuestion(excludedQuestionIds: ReadonlySet<string> = new Set()): boolean {
   const elements = uniqueElements(["button", "a", "input[type=button]", "[role=button]"]);
   const target = elements.find((element) => {
     const text = buttonText(element);
@@ -254,9 +255,13 @@ export function clickNextQuestion(): boolean {
   const ordered = currentIndex >= 0
     ? [...containers.slice(currentIndex + 1), ...containers.slice(0, currentIndex)]
     : containers;
-  const next = ordered.find((container) => !containerAnswered(container));
+  const next = ordered.find((container) => {
+    if (containerAnswered(container)) return false;
+    const questionId = questionDomFromContainer(container)?.question.id;
+    return !questionId || !excludedQuestionIds.has(questionId);
+  });
   if (!next || next === current) return false;
-  next.scrollIntoView({ behavior: "smooth", block: "center" });
+  next.scrollIntoView({ behavior: "auto", block: "center" });
   return true;
 }
 

@@ -124,12 +124,21 @@ button:disabled, select:disabled { cursor: default; opacity: .55; }
 .question-grid span.answered { border-color: #667fa8; color: #fff; background: #667fa8; }
 .question-grid span.current { border-color: #667fa8; color: #526b95; background: #fff; box-shadow: inset 0 0 0 1px #667fa8; font-weight: 700; }
 .question-grid span.answered.current { color: #fff; background: #667fa8; box-shadow: 0 0 0 2px rgba(102, 127, 168, .18); }
+.question-grid span.skipped { border-color: #d6ae69; color: #8b672d; background: #fbf3e5; }
+.question-grid span.skipped.current { box-shadow: inset 0 0 0 1px #d6ae69; }
 .question-start { width: 100%; min-height: 42px; margin-top: 16px; border-color: #667fa8; color: #fff; background: #667fa8; font-size: 13px; font-weight: 650; }
 .question-start:hover { border-color: #5f769d; background: #5f769d; }
 .question-start.running { border-color: #c5b7a5; color: #5e5850; background: #f3eee5; }
 .question-start.running:hover { border-color: #b9aa97; background: #ebe3d7; }
+.answer-stats { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 9px; color: #6f7377; font-size: 9px; }
+.answer-stats b { color: #55715d; font-weight: 650; }
+.answer-stats em { color: #9a7134; font-style: normal; font-weight: 650; }
 .question-live-status { margin: 10px 3px 0; padding: 8px 10px; border-radius: 8px; color: #566b5d; background: #f0f5f1; font-size: 9px; line-height: 1.5; text-align: center; overflow-wrap: anywhere; }
 .question-live-status.error { color: #955050; background: #f8eeee; }
+.answer-report { margin-top: 9px; padding: 8px 10px; border: 1px solid #eadfce; border-radius: 8px; color: #7d673f; background: #fbf6ed; font-size: 9px; }
+.answer-report summary { cursor: pointer; font-weight: 650; }
+.answer-report ul { margin: 7px 0 0; padding-left: 16px; line-height: 1.55; }
+.answer-report small { display: block; margin-top: 6px; color: #8d7d64; }
 .question-note { margin: 9px 3px 0; color: var(--lp-muted); font-size: 9px; line-height: 1.5; text-align: center; }
 
 .controls { display: grid; gap: 10px; padding: 16px 14px 12px; }

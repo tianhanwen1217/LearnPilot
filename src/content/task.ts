@@ -1,8 +1,9 @@
 import { normalizeText } from "../shared/text";
 import { effectiveConfidenceThreshold } from "../shared/confidence";
+import { answerRunSummary, emptyAnswerRunStats, isSystemicAnalysisError, recordAnswered, recordSkipped } from "../shared/answerRun";
 import { getSettings } from "../shared/storage";
-import type { AnalysisResult, DetectedTaskState, MessageResponse, QuestionPageSummary, RuntimeMessage, TabAutomationState, VideoProgress } from "../shared/types";
-import { applySuggestedOptions, clickNextQuestion, extractCurrentQuestion, hasFinalSubmit, inspectQuestionPage } from "./question";
+import type { AnalysisResult, AnswerRunStats, DetectedTaskState, MessageResponse, QuestionPageSummary, RuntimeMessage, TabAutomationState, VideoProgress } from "../shared/types";
+import { applySuggestedOptions, clickNextQuestion, extractCurrentQuestion, inspectQuestionPage } from "./question";
 
 export type PageTaskKind = DetectedTaskState;
 
@@ -83,6 +84,8 @@ let lastFrameState = "";
 let lastFrameReportAt = 0;
 let lastFrameTextScrollAt = 0;
 let lastFrameSyncAt = 0;
+let frameAnswerStats = emptyAnswerRunStats();
+let frameSkippedQuestionIds = new Set<string>();
 
 async function syncFrameControls(): Promise<void> {
   const now = Date.now();
@@ -93,22 +96,28 @@ async function syncFrameControls(): Promise<void> {
     chrome.runtime.sendMessage({ type: "GET_TAB_AUTOMATION" } satisfies RuntimeMessage).catch(() => null) as Promise<MessageResponse<TabAutomationState> | null>,
   ]);
   if (playback?.ok && typeof playback.data === "boolean") framePlaybackEnabled = playback.data;
-  if (automation?.ok && automation.data) frameAutomation = automation.data;
+  if (automation?.ok && automation.data) {
+    if (!frameAutomation.autoAnswer && automation.data.autoAnswer) {
+      frameAnswerStats = emptyAnswerRunStats();
+      frameSkippedQuestionIds = new Set();
+    }
+    frameAutomation = automation.data;
+  }
 }
 
-function reportFrameState(state: DetectedTaskState, message: string, force = false, questionSummary?: QuestionPageSummary): void {
-  const signature = `${state}:${message}:${questionSummary?.total ?? 0}:${questionSummary?.answered ?? 0}:${questionSummary?.currentIndex ?? 0}`;
+function reportFrameState(state: DetectedTaskState, message: string, force = false, questionSummary?: QuestionPageSummary, answerStats?: AnswerRunStats): void {
+  const signature = `${state}:${message}:${questionSummary?.total ?? 0}:${questionSummary?.answered ?? 0}:${questionSummary?.currentIndex ?? 0}:${answerStats?.processed ?? 0}`;
   const now = Date.now();
   if (!force && signature === lastFrameState && now - lastFrameReportAt < 4000) return;
   lastFrameState = signature;
   lastFrameReportAt = now;
-  chrome.runtime.sendMessage({ type: "FRAME_TASK_STATE", state, message, questionSummary } satisfies RuntimeMessage).catch(() => undefined);
+  chrome.runtime.sendMessage({ type: "FRAME_TASK_STATE", state, message, questionSummary, answerStats } satisfies RuntimeMessage).catch(() => undefined);
 }
 
 async function stopFrameAuto(reason: string): Promise<void> {
   frameAutomation = { ...frameAutomation, autoAnswer: false };
-  reportFrameState("question", reason, true);
-  await chrome.runtime.sendMessage({ type: "FRAME_AUTO_STOPPED", reason } satisfies RuntimeMessage).catch(() => undefined);
+  reportFrameState("question", reason, true, inspectQuestionPage() ?? undefined, frameAnswerStats);
+  await chrome.runtime.sendMessage({ type: "FRAME_AUTO_STOPPED", reason, answerStats: frameAnswerStats } satisfies RuntimeMessage).catch(() => undefined);
 }
 
 async function processFrameQuestion(): Promise<void> {
@@ -118,24 +127,38 @@ async function processFrameQuestion(): Promise<void> {
   if (!extracted) return;
   frameQuestionBusy = true;
   try {
-    reportFrameState("question", "题目处理中…", true);
-    const response = await chrome.runtime.sendMessage({ type: "ANALYZE_QUESTION", question: extracted.question } satisfies RuntimeMessage) as MessageResponse<AnalysisResult>;
-    if (!response.ok || !response.data) return void await stopFrameAuto(response.error || "题目分析失败，已停止");
-    if (frameAutomation.paused || !frameAutomation.autoAnswer) return;
     const settings = await getSettings();
+    const skipAndContinue = async (reason: string) => {
+      frameSkippedQuestionIds.add(extracted.question.id);
+      const index = inspectQuestionPage()?.currentIndex;
+      frameAnswerStats = recordSkipped(frameAnswerStats, extracted.question.id, reason, index);
+      reportFrameState("question", `${index ? `第 ${index} 题` : "当前题"}已跳过：${reason}；继续下一题`, true, inspectQuestionPage() ?? undefined, frameAnswerStats);
+      await new Promise((resolve) => window.setTimeout(resolve, settings.autoNextDelayMs));
+      if (!frameAutomation.autoAnswer || frameAutomation.paused) return;
+      if (!clickNextQuestion(frameSkippedQuestionIds)) await stopFrameAuto(answerRunSummary(frameAnswerStats));
+    };
+
+    reportFrameState("question", "题目处理中…", true, inspectQuestionPage() ?? undefined, frameAnswerStats);
+    const response = await chrome.runtime.sendMessage({ type: "ANALYZE_QUESTION", question: extracted.question } satisfies RuntimeMessage) as MessageResponse<AnalysisResult>;
+    if (!response.ok || !response.data) {
+      const reason = response.error || "题目分析失败";
+      return void await (isSystemicAnalysisError(reason) ? stopFrameAuto(`${reason}；已停止`) : skipAndContinue(reason));
+    }
+    if (frameAutomation.paused || !frameAutomation.autoAnswer) return;
     const confidenceThreshold = effectiveConfidenceThreshold(settings);
-    if (response.data.confidence < confidenceThreshold) return void await stopFrameAuto(`置信度 ${response.data.confidence}% 低于阈值 ${confidenceThreshold}%，已停止`);
-    if (response.data.warnings.length) return void await stopFrameAuto(`模型提示：${response.data.warnings[0]}；已停止`);
-    if (!response.data.suggestedOptions.length) return void await stopFrameAuto(extracted.question.options.length
-      ? "模型没有返回可勾选的选项；已停止"
+    if (response.data.confidence < confidenceThreshold) return void await skipAndContinue(`置信度 ${response.data.confidence}% 低于阈值 ${confidenceThreshold}%`);
+    if (response.data.warnings.length) return void await skipAndContinue(`模型提示：${response.data.warnings[0]}`);
+    if (!response.data.suggestedOptions.length) return void await skipAndContinue(extracted.question.options.length
+      ? "模型没有返回可勾选的选项"
       : "没有识别到可勾选的选项；当前页面可能是填空/简答题或选项结构尚未适配");
     const applied = applySuggestedOptions(response.data);
-    if (!applied.applied || applied.missing.length) return void await stopFrameAuto(`答案已分析为 ${response.data.suggestedOptions.join("、")}，但页面选项匹配失败${applied.missing.length ? `（缺少 ${applied.missing.join("、")}）` : ""}`);
-    reportFrameState("question", `已勾选 ${response.data.suggestedOptions.join("、")}，准备下一题`, true);
+    if (!applied.applied || applied.missing.length) return void await skipAndContinue(`答案为 ${response.data.suggestedOptions.join("、")}，但页面选项匹配失败${applied.missing.length ? `（缺少 ${applied.missing.join("、")}）` : ""}`);
+    frameAnswerStats = recordAnswered(frameAnswerStats);
+    reportFrameState("question", `已勾选 ${response.data.suggestedOptions.join("、")}；成功 ${frameAnswerStats.answered}，跳过 ${frameAnswerStats.skipped}`, true, inspectQuestionPage() ?? undefined, frameAnswerStats);
     await new Promise((resolve) => window.setTimeout(resolve, settings.autoNextDelayMs));
     if (frameAutomation.paused || !frameAutomation.autoAnswer) return;
     if (pageHasBlockingPrompt()) return void await stopFrameAuto("检测到签到、登录或验证，已暂停");
-    if (!clickNextQuestion()) return void await stopFrameAuto(hasFinalSubmit() ? "题目已处理完，请检查后手动提交" : "没有找到下一题，已停止");
+    if (!clickNextQuestion(frameSkippedQuestionIds)) return void await stopFrameAuto(answerRunSummary(frameAnswerStats));
   } finally {
     frameQuestionBusy = false;
   }
@@ -169,7 +192,7 @@ async function inspectFrameTask(): Promise<void> {
     text: framePlaybackEnabled ? "文本任务处理中…" : "已识别文本任务",
     idle: "未识别到可处理的课程内容",
   };
-  reportFrameState(state, messages[state], false, state === "question" ? questionSummary ?? undefined : undefined);
+  reportFrameState(state, messages[state], false, state === "question" ? questionSummary ?? undefined : undefined, state === "question" ? frameAnswerStats : undefined);
   if (state === "blocked" && frameAutomation.autoAnswer) await stopFrameAuto(messages.blocked);
   if (state === "question") void processFrameQuestion();
   if (state === "text" && framePlaybackEnabled && Date.now() - lastFrameTextScrollAt > 1600) {
@@ -192,6 +215,10 @@ export function setFramePlaybackState(enabled: boolean): void {
 }
 
 export function setFrameAutomationState(state: TabAutomationState): void {
+  if (!frameAutomation.autoAnswer && state.autoAnswer) {
+    frameAnswerStats = emptyAnswerRunStats();
+    frameSkippedQuestionIds = new Set();
+  }
   frameAutomation = state;
   void inspectFrameTask();
 }

@@ -127,7 +127,7 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
         case "FRAME_TASK_STATE": {
           const tabId = sender.tab?.id;
           if (tabId != null) {
-            await chrome.tabs.sendMessage(tabId, { type: "PAGE_TASK_STATE", state: message.state, message: message.message, frameId: sender.frameId ?? 0, questionSummary: message.questionSummary } satisfies RuntimeMessage, { frameId: 0 }).catch(() => undefined);
+            await chrome.tabs.sendMessage(tabId, { type: "PAGE_TASK_STATE", state: message.state, message: message.message, frameId: sender.frameId ?? 0, questionSummary: message.questionSummary, answerStats: message.answerStats } satisfies RuntimeMessage, { frameId: 0 }).catch(() => undefined);
           }
           sendResponse({ ok: true });
           return;
@@ -137,7 +137,7 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
           if (tabId == null) throw new Error("无法识别当前标签页。");
           const automation = await getTabAutomation(tabId);
           await setTabAutomation(tabId, { ...automation, autoAnswer: false });
-          await chrome.tabs.sendMessage(tabId, { type: "PAGE_AUTO_STOPPED", reason: message.reason } satisfies RuntimeMessage, { frameId: 0 }).catch(() => undefined);
+          await chrome.tabs.sendMessage(tabId, { type: "PAGE_AUTO_STOPPED", reason: message.reason, answerStats: message.answerStats } satisfies RuntimeMessage, { frameId: 0 }).catch(() => undefined);
           sendResponse({ ok: true });
           return;
         }

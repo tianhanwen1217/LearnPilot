@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { answerRunSummary, emptyAnswerRunStats, isSystemicAnalysisError, recordAnswered, recordSkipped } from "../shared/answerRun";
 import { courseSessionKey } from "../shared/defaults";
 import { effectiveConfidenceThreshold } from "../shared/confidence";
 import { applyProviderPreset, detectApiProvider } from "../shared/providers";
 import { getSettings, saveSettings } from "../shared/storage";
-import type { AnalysisResult, CourseSessionState, DetectedTaskState, ExtractedQuestion, MessageResponse, QuestionPageSummary, QuestionType, RuntimeMessage, TabAutomationState, VideoProgress } from "../shared/types";
-import { applySuggestedOptions, clickNextQuestion, detectCourseId, extractCurrentQuestion, hasFinalSubmit, inspectQuestionPage } from "./question";
+import type { AnalysisResult, AnswerRunStats, CourseSessionState, DetectedTaskState, ExtractedQuestion, MessageResponse, QuestionPageSummary, QuestionType, RuntimeMessage, TabAutomationState, VideoProgress } from "../shared/types";
+import { applySuggestedOptions, clickNextQuestion, detectCourseId, extractCurrentQuestion, inspectQuestionPage } from "./question";
 import { advanceToNextLesson, initializePlaybackFrame } from "./playback";
 import { clampLauncherPosition, launcherMovementExceeded, snapLauncherPosition, type LauncherPoint } from "./launcher";
 import { clampPanelOpacity, clampPanelPosition, clampPanelScale } from "./panel";
@@ -71,6 +72,7 @@ export function App() {
   const [assistantPaused, setAssistantPaused] = useState(false);
   const [taskKind, setTaskKind] = useState<PageTaskKind>("idle");
   const [questionSummary, setQuestionSummary] = useState<QuestionPageSummary | null>(null);
+  const [answerStats, setAnswerStats] = useState<AnswerRunStats>(() => emptyAnswerRunStats());
   const [launcherPosition, setLauncherPosition] = useState(() => ({ x: Math.max(24, window.innerWidth - LAUNCHER_EDGE_OFFSET), y: window.innerHeight / 2 }));
   const [launcherDragging, setLauncherDragging] = useState(false);
   const [launcherLaunching, setLauncherLaunching] = useState(false);
@@ -92,7 +94,9 @@ export function App() {
   const jumpModeRef = useRef<"next" | "stay">("stay");
   const taskKindRef = useRef<PageTaskKind>("idle");
   const videoSignalRef = useRef<{ progress: VideoProgress; receivedAt: number } | null>(null);
-  const remoteTaskRef = useRef<{ state: DetectedTaskState; message: string; frameId: number; receivedAt: number; questionSummary?: QuestionPageSummary } | null>(null);
+  const remoteTaskRef = useRef<{ state: DetectedTaskState; message: string; frameId: number; receivedAt: number; questionSummary?: QuestionPageSummary; answerStats?: AnswerRunStats } | null>(null);
+  const answerStatsRef = useRef<AnswerRunStats>(emptyAnswerRunStats());
+  const skippedQuestionIdsRef = useRef(new Set<string>());
   const lastTaskUrlRef = useRef(location.href);
   const lastAdvanceAtRef = useRef(0);
   const launcherTimerRef = useRef<number | null>(null);
@@ -145,6 +149,11 @@ export function App() {
     setStatus(message);
   }, [courseId]);
 
+  const updateAnswerStats = useCallback((stats: AnswerRunStats) => {
+    answerStatsRef.current = stats;
+    setAnswerStats(stats);
+  }, []);
+
   const analyzeCurrentQuestion = useCallback(async (): Promise<{ question: ExtractedQuestion; result: AnalysisResult } | { error: string }> => {
     if (busyRef.current) return { error: "上一道题仍在处理中" };
     busyRef.current = true;
@@ -170,6 +179,33 @@ export function App() {
     if (!autoRef.current || assistantPausedRef.current || autoLoopRef.current) return;
     autoLoopRef.current = true;
     try {
+      const advanceOrFinish = async (question: ExtractedQuestion, settings: Awaited<ReturnType<typeof getSettings>>): Promise<boolean> => {
+        await new Promise((resolve) => window.setTimeout(resolve, settings.autoNextDelayMs));
+        if (!autoRef.current || assistantPausedRef.current) return false;
+        if (pageHasBlockingPrompt()) {
+          await stopAuto("检测到签到、登录或验证，已暂停");
+          return false;
+        }
+        if (!clickNextQuestion(skippedQuestionIdsRef.current)) {
+          await stopAuto(answerRunSummary(answerStatsRef.current));
+          return false;
+        }
+        if (!await waitForQuestionChange(question.id)) {
+          await stopAuto(`${answerRunSummary(answerStatsRef.current)}；页面没有切换到下一题`);
+          return false;
+        }
+        return true;
+      };
+
+      const skipAndContinue = async (question: ExtractedQuestion, reason: string, settings: Awaited<ReturnType<typeof getSettings>>): Promise<boolean> => {
+        skippedQuestionIdsRef.current.add(question.id);
+        const index = inspectQuestionPage()?.currentIndex;
+        const stats = recordSkipped(answerStatsRef.current, question.id, reason, index);
+        updateAnswerStats(stats);
+        setStatus(`${index ? `第 ${index} 题` : "当前题"}已跳过：${reason}；继续下一题`);
+        return advanceOrFinish(question, settings);
+      };
+
       while (autoRef.current && !assistantPausedRef.current) {
         if (pageHasBlockingPrompt()) {
           await stopAuto("检测到签到、登录或验证，已暂停");
@@ -179,59 +215,54 @@ export function App() {
           await stopAuto("检测到超星加密字体；DeepSeek 文本模型无法读取页面文字，已停止");
           return;
         }
-        if (!extractCurrentQuestion(false)) return;
+        if (!extractCurrentQuestion(false)) {
+          if (answerStatsRef.current.processed) await stopAuto(answerRunSummary(answerStatsRef.current));
+          return;
+        }
         const analyzed = await analyzeCurrentQuestion();
         if (!autoRef.current || assistantPausedRef.current) return;
         if ("error" in analyzed) {
-          await stopAuto(`${analyzed.error}；已停止`);
-          return;
+          if (isSystemicAnalysisError(analyzed.error)) {
+            await stopAuto(`${analyzed.error}；已停止`);
+            return;
+          }
+          const current = extractCurrentQuestion(false);
+          if (!current) return;
+          const settings = await getSettings();
+          if (!await skipAndContinue(current.question, analyzed.error, settings)) return;
+          continue;
         }
         const settings = await getSettings();
         const confidenceThreshold = effectiveConfidenceThreshold(settings);
         if (analyzed.result.confidence < confidenceThreshold) {
-          await stopAuto(`置信度 ${analyzed.result.confidence}% 低于阈值 ${confidenceThreshold}%，已停止`);
-          return;
+          if (!await skipAndContinue(analyzed.question, `置信度 ${analyzed.result.confidence}% 低于阈值 ${confidenceThreshold}%`, settings)) return;
+          continue;
         }
         if (analyzed.result.warnings.length) {
-          await stopAuto(`模型提示：${analyzed.result.warnings[0]}；已停止`);
-          return;
+          if (!await skipAndContinue(analyzed.question, `模型提示：${analyzed.result.warnings[0]}`, settings)) return;
+          continue;
         }
         if (!analyzed.result.suggestedOptions.length) {
-          await stopAuto(analyzed.question.options.length
+          const reason = analyzed.question.options.length
             ? "模型没有返回可勾选的选项；已停止"
-            : "没有识别到可勾选的选项；当前页面可能是填空/简答题或选项结构尚未适配");
-          return;
+            : "没有识别到可勾选的选项；当前页面可能是填空/简答题或选项结构尚未适配";
+          if (!await skipAndContinue(analyzed.question, reason.replace("；已停止", ""), settings)) return;
+          continue;
         }
         const applied = applySuggestedOptions(analyzed.result);
         if (!applied.applied || applied.missing.length) {
-          await stopAuto(`答案已分析为 ${analyzed.result.suggestedOptions.join("、")}，但页面选项匹配失败${applied.missing.length ? `（缺少 ${applied.missing.join("、")}）` : ""}`);
-          return;
+          const reason = `答案为 ${analyzed.result.suggestedOptions.join("、")}，但页面选项匹配失败${applied.missing.length ? `（缺少 ${applied.missing.join("、")}）` : ""}`;
+          if (!await skipAndContinue(analyzed.question, reason, settings)) return;
+          continue;
         }
-        setStatus(`已勾选 ${analyzed.result.suggestedOptions.join("、")}，准备下一题`);
-        await new Promise((resolve) => window.setTimeout(resolve, settings.autoNextDelayMs));
-        if (!autoRef.current || assistantPausedRef.current) return;
-        if (pageHasBlockingPrompt()) {
-          await stopAuto("检测到签到、登录或验证，已暂停");
-          return;
-        }
-        if (!clickNextQuestion()) {
-          await stopAuto(hasFinalSubmit() ? "题目已处理完，请检查后手动提交" : "没有找到下一题，已停止");
-          return;
-        }
-        if (!await waitForQuestionChange(analyzed.question.id)) {
-          const current = extractCurrentQuestion(false)?.question.id;
-          if (!current) {
-            setStatus("任务已切换，正在重新识别页面…");
-            return;
-          }
-          await stopAuto("页面没有切换到下一题，已停止");
-          return;
-        }
+        updateAnswerStats(recordAnswered(answerStatsRef.current));
+        setStatus(`已勾选 ${analyzed.result.suggestedOptions.join("、")}；成功 ${answerStatsRef.current.answered}，跳过 ${answerStatsRef.current.skipped}`);
+        if (!await advanceOrFinish(analyzed.question, settings)) return;
       }
     } finally {
       autoLoopRef.current = false;
     }
-  }, [analyzeCurrentQuestion, stopAuto]);
+  }, [analyzeCurrentQuestion, stopAuto, updateAnswerStats]);
 
   const setAutoAssist = useCallback(async (enabled: boolean) => {
     if (!enabled) {
@@ -240,12 +271,14 @@ export function App() {
     }
     autoRef.current = true;
     pausedReasonRef.current = "";
+    skippedQuestionIdsRef.current = new Set();
+    updateAnswerStats(emptyAnswerRunStats());
     setAutoAnswer(true);
     const current = await loadCourseState(courseId);
     await saveCourseState({ ...current, testMode: true, autoRunning: true });
     await chrome.runtime.sendMessage({ type: "SET_TAB_AUTOMATION", state: { autoAnswer: true, paused: assistantPausedRef.current } } satisfies RuntimeMessage);
     setStatus("自动答题已开启");
-  }, [courseId, stopAuto]);
+  }, [courseId, stopAuto, updateAnswerStats]);
 
   useEffect(() => {
     void Promise.all([
@@ -285,12 +318,16 @@ export function App() {
       if (message.type === "PAGE_TASK_STATE") {
         const current = remoteTaskRef.current;
         if (message.state !== "idle" || !current || current.state === "idle" || Date.now() - current.receivedAt > 5000) {
-          remoteTaskRef.current = { state: message.state, message: message.message, frameId: message.frameId, receivedAt: Date.now(), questionSummary: message.questionSummary };
+          remoteTaskRef.current = { state: message.state, message: message.message, frameId: message.frameId, receivedAt: Date.now(), questionSummary: message.questionSummary, answerStats: message.answerStats };
           setTaskKind(message.state);
           setQuestionSummary(message.state === "question" ? message.questionSummary ?? null : null);
+          if (message.answerStats) updateAnswerStats(message.answerStats);
         }
       }
-      if (message.type === "PAGE_AUTO_STOPPED") void stopAuto(message.reason);
+      if (message.type === "PAGE_AUTO_STOPPED") {
+        if (message.answerStats) updateAnswerStats(message.answerStats);
+        void stopAuto(message.reason);
+      }
       if (message.type === "GET_PAGE_ASSIST_STATUS") sendResponse({ ok: true, data: { testMode: autoRef.current, autoRunning: autoRef.current, paused: assistantPausedRef.current } });
       if (message.type === "SET_TEST_ASSIST") {
         void setAutoAssist(message.enabled).then(() => sendResponse({ ok: true })).catch((error) => {
@@ -302,7 +339,7 @@ export function App() {
     };
     chrome.runtime.onMessage.addListener(listener);
     return () => chrome.runtime.onMessage.removeListener(listener);
-  }, [courseId, setAutoAssist]);
+  }, [courseId, setAutoAssist, stopAuto, updateAnswerStats]);
 
   useEffect(() => {
     let disposed = false;
@@ -656,6 +693,7 @@ export function App() {
       .map((type) => ({ type, items: questionSummary.items.filter((item) => item.type === type) }))
       .filter((group) => group.items.length)
     : [];
+  const skippedQuestionIds = new Set(answerStats.failures.map((item) => item.questionId));
 
   if (!open) {
     return <button type="button" className={`floating-button${launcherDragging ? " floating-button-dragging" : ""}${launcherLaunching ? " floating-button-launching" : ""}`} style={{ left: launcherPosition.x, top: launcherPosition.y }} title="拖动位置，点击打开 LearnPilot" aria-label="拖动位置，点击打开 LearnPilot" onPointerDown={beginLauncherDrag} onPointerMove={moveLauncher} onPointerUp={finishLauncherDrag} onPointerCancel={cancelLauncherDrag} onLostPointerCapture={loseLauncherCapture} onClick={() => { if (!launcherSuppressClickRef.current) openFromLauncher(); }}><img src={iconUrl} alt="" draggable={false} /></button>;
@@ -685,9 +723,11 @@ export function App() {
     {taskKind === "question" ? <section className="question-workspace" aria-busy={busy}>
       <div className="question-overview"><strong>共 {questionSummary?.total ?? 1} 题</strong><span><i className="answered-dot" />已答 {questionSummary?.answered ?? 0}<i className="pending-dot" />待答 {(questionSummary?.total ?? 1) - (questionSummary?.answered ?? 0)}</span></div>
       <div className="question-progress" aria-label={`已完成 ${questionSummary?.answered ?? 0} / ${questionSummary?.total ?? 1}`}><i style={{ width: `${((questionSummary?.answered ?? 0) / Math.max(1, questionSummary?.total ?? 1)) * 100}%` }} /></div>
-      <div className="question-groups">{questionGroups.map((group) => <section key={group.type}><h3>{QUESTION_TYPE_LABELS[group.type]} <small>({group.items.length})</small></h3><div className="question-grid">{group.items.map((item) => <span key={item.index} className={`${item.answered ? "answered " : ""}${item.current ? "current" : ""}`} title={`第 ${item.index} 题`}>{item.index}</span>)}</div></section>)}</div>
+      <div className="question-groups">{questionGroups.map((group) => <section key={group.type}><h3>{QUESTION_TYPE_LABELS[group.type]} <small>({group.items.length})</small></h3><div className="question-grid">{group.items.map((item) => <span key={item.index} className={`${item.answered ? "answered " : ""}${item.id && skippedQuestionIds.has(item.id) ? "skipped " : ""}${item.current ? "current" : ""}`} title={`第 ${item.index} 题${item.id && skippedQuestionIds.has(item.id) ? " · 已跳过" : ""}`}>{item.index}</span>)}</div></section>)}</div>
       <button type="button" className={`question-start${autoAnswer ? " running" : ""}`} disabled={busy} onClick={() => void updateAutoAnswer(!autoAnswer)}>{busy ? "正在处理…" : autoAnswer ? "停止答题" : "开始答题"}</button>
+      {(answerStats.processed > 0 || answerStats.skipped > 0) && <div className="answer-stats"><span>已处理 {answerStats.processed}</span><b>成功 {answerStats.answered}</b><em>跳过 {answerStats.skipped}</em></div>}
       <p className={`question-live-status${/失败|错误|未识别|没有|无法|低于|请先|已停止/.test(status) ? " error" : ""}`}>{status}</p>
+      {!autoAnswer && answerStats.failures.length > 0 && <details className="answer-report"><summary>查看跳过题目明细</summary><ul>{answerStats.failures.slice(0, 12).map((failure) => <li key={failure.questionId}>{failure.index ? `第 ${failure.index} 题：` : ""}{failure.reason}</li>)}</ul>{answerStats.failures.length > 12 && <small>另有 {answerStats.failures.length - 12} 题被跳过</small>}</details>}
       <p className="question-note">按置信度自动勾选并进入下一题，最终提交仍由你点击。</p>
     </section> : <>
       <section className="controls" aria-busy={busy}>
