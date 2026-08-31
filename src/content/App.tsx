@@ -514,6 +514,19 @@ export function App() {
     return () => window.cancelAnimationFrame(frame);
   }, [open, panelScale, savePanelDisplay]);
 
+  useEffect(() => {
+    if (!open) return undefined;
+    const collapseOnOutsidePointer = (event: globalThis.PointerEvent) => {
+      const panel = panelRef.current;
+      if (!panel || event.composedPath().includes(panel)) return;
+      setDisplayMenuOpen(false);
+      setApiMenuOpen(false);
+      setOpen(false);
+    };
+    document.addEventListener("pointerdown", collapseOnOutsidePointer, true);
+    return () => document.removeEventListener("pointerdown", collapseOnOutsidePointer, true);
+  }, [open]);
+
   const updateRate = async (rate: number) => {
     setPlaybackRateState(rate);
     setBusy(true);
