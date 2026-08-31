@@ -3,7 +3,7 @@ import { effectiveConfidenceThreshold } from "../shared/confidence";
 import { answerRunSummary, emptyAnswerRunStats, isSystemicAnalysisError, recordAnswered, recordSkipped, setCurrentQuestion } from "../shared/answerRun";
 import { getSettings } from "../shared/storage";
 import type { AnalysisResult, AnswerRunStats, DetectedTaskState, MessageResponse, QuestionPageSummary, RuntimeMessage, TabAutomationState, VideoProgress } from "../shared/types";
-import { applySuggestedOptions, clickNextQuestion, extractCurrentQuestion, focusFirstUnansweredQuestion, inspectQuestionPage } from "./question";
+import { applySuggestedOptions, clickNextQuestion, extractNextUnprocessedQuestion, focusFirstUnansweredQuestion, inspectQuestionPage } from "./question";
 
 export type PageTaskKind = DetectedTaskState;
 
@@ -140,7 +140,7 @@ async function processFrameQuestion(): Promise<void> {
   if (frameAnswerStats.processed === 0 && frameProcessedQuestionIds.size === 0) {
     focusFirstUnansweredQuestion(frameProcessedQuestionIds);
   }
-  const extracted = extractCurrentQuestion(false);
+  const extracted = extractNextUnprocessedQuestion(frameProcessedQuestionIds);
   if (!extracted) return;
   if (frameProcessedQuestionIds.has(extracted.question.id)) {
     if (!clickNextQuestion(frameProcessedQuestionIds)) await stopFrameAuto(answerRunSummary(frameAnswerStats, inspectQuestionPage()?.total));
@@ -173,7 +173,7 @@ async function processFrameQuestion(): Promise<void> {
     if (!response.data.suggestedOptions.length) return void await skipAndContinue(extracted.question.options.length
       ? "模型没有返回可勾选的选项"
       : "没有识别到可勾选的选项；当前页面可能是填空/简答题或选项结构尚未适配");
-    const applied = await applySuggestedOptions(response.data);
+    const applied = await applySuggestedOptions(response.data, extracted.question.id);
     if (!applied.applied || applied.missing.length) return void await skipAndContinue(`答案为 ${response.data.suggestedOptions.join("、")}，但页面选项匹配失败${applied.missing.length ? `（缺少 ${applied.missing.join("、")}）` : ""}`);
     frameProcessedQuestionIds.add(extracted.question.id);
     frameAnswerStats = recordAnswered(frameAnswerStats, extracted.question.id, currentIndex);

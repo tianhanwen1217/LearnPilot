@@ -5,7 +5,7 @@ import { effectiveConfidenceThreshold } from "../shared/confidence";
 import { applyProviderPreset, detectApiProvider } from "../shared/providers";
 import { getSettings, saveSettings } from "../shared/storage";
 import type { AnalysisResult, AnswerRunStats, CourseSessionState, DetectedTaskState, ExtractedQuestion, MessageResponse, QuestionPageSummary, RuntimeMessage, TabAutomationState, VideoProgress } from "../shared/types";
-import { applySuggestedOptions, clickNextQuestion, detectCourseId, extractCurrentQuestion, focusFirstUnansweredQuestion, inspectQuestionPage } from "./question";
+import { applySuggestedOptions, clickNextQuestion, detectCourseId, extractCurrentQuestion, extractNextUnprocessedQuestion, focusFirstUnansweredQuestion, inspectQuestionPage } from "./question";
 import { advanceToNextLesson, initializePlaybackFrame } from "./playback";
 import { clampLauncherPosition, launcherMovementExceeded, snapLauncherPosition, type LauncherPoint } from "./launcher";
 import { clampPanelOpacity, clampPanelPosition, clampPanelScale, shouldCollapsePanel } from "./panel";
@@ -148,17 +148,17 @@ export function App() {
     setAnswerStats(stats);
   }, []);
 
-  const analyzeCurrentQuestion = useCallback(async (): Promise<{ question: ExtractedQuestion; result: AnalysisResult } | { error: string }> => {
+  const analyzeCurrentQuestion = useCallback(async (lockedQuestion?: ExtractedQuestion): Promise<{ question: ExtractedQuestion; result: AnalysisResult } | { error: string }> => {
     if (busyRef.current) return { error: "上一道题仍在处理中" };
     busyRef.current = true;
     setBusy(true);
     try {
-      const extracted = extractCurrentQuestion(false);
-      if (!extracted) throw new Error("没有识别到当前题目");
+      const question = lockedQuestion ?? extractCurrentQuestion(false)?.question;
+      if (!question) throw new Error("没有识别到当前题目");
       setStatus("正在搜索并分析当前题目…");
-      const response = await chrome.runtime.sendMessage({ type: "ANALYZE_QUESTION", question: extracted.question } satisfies RuntimeMessage) as MessageResponse<AnalysisResult>;
+      const response = await chrome.runtime.sendMessage({ type: "ANALYZE_QUESTION", question } satisfies RuntimeMessage) as MessageResponse<AnalysisResult>;
       if (!response.ok || !response.data) throw new Error(response.error || "题目分析失败");
-      return { question: extracted.question, result: response.data };
+      return { question, result: response.data };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setStatus(message);
@@ -214,7 +214,7 @@ export function App() {
         if (answerStatsRef.current.processed === 0 && processedQuestionIdsRef.current.size === 0) {
           focusFirstUnansweredQuestion(processedQuestionIdsRef.current);
         }
-        const currentQuestion = extractCurrentQuestion(false);
+        const currentQuestion = extractNextUnprocessedQuestion(processedQuestionIdsRef.current);
         if (!currentQuestion) {
           if (answerStatsRef.current.processed) await stopAuto(answerRunSummary(answerStatsRef.current, inspectQuestionPage()?.total));
           return;
@@ -225,17 +225,15 @@ export function App() {
         }
         const currentIndex = currentQuestion.question.pageIndex ?? inspectQuestionPage()?.currentIndex;
         updateAnswerStats(setCurrentQuestion(answerStatsRef.current, currentQuestion.question.id, currentIndex));
-        const analyzed = await analyzeCurrentQuestion();
+        const analyzed = await analyzeCurrentQuestion(currentQuestion.question);
         if (!autoRef.current || assistantPausedRef.current) return;
         if ("error" in analyzed) {
           if (isSystemicAnalysisError(analyzed.error)) {
             await stopAuto(`${analyzed.error}；已停止`);
             return;
           }
-          const current = extractCurrentQuestion(false);
-          if (!current) return;
           const settings = await getSettings();
-          if (!await skipAndContinue(current.question, analyzed.error, settings)) return;
+          if (!await skipAndContinue(currentQuestion.question, analyzed.error, settings)) return;
           continue;
         }
         const settings = await getSettings();
@@ -255,7 +253,7 @@ export function App() {
           if (!await skipAndContinue(analyzed.question, reason.replace("；已停止", ""), settings)) return;
           continue;
         }
-        const applied = await applySuggestedOptions(analyzed.result);
+        const applied = await applySuggestedOptions(analyzed.result, analyzed.question.id);
         if (!applied.applied || applied.missing.length) {
           const reason = `答案为 ${analyzed.result.suggestedOptions.join("、")}，但页面选项匹配失败${applied.missing.length ? `（缺少 ${applied.missing.join("、")}）` : ""}`;
           if (!await skipAndContinue(analyzed.question, reason, settings)) return;

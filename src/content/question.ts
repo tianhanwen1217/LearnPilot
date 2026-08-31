@@ -122,8 +122,23 @@ function candidateContainers(): HTMLElement[] {
   const candidates = [...new Set([...uniqueElements(CONTAINER_SELECTORS), ...inferredQuestionContainers()])]
     .sort((a, b) => a === b ? 0 : a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1);
   if (candidates.length) {
-    const leafCandidates = candidates.filter((element) => !candidates.some((other) => other !== element && element.contains(other) && other.innerText.length > 20));
-    return leafCandidates
+    const leaves = candidates.filter((element) => !candidates.some((other) => other !== element && element.contains(other) && other.innerText.length > 20));
+    const resolved = leaves.map((leaf) => {
+      if (questionIndexFromContainer(leaf)) return leaf;
+      // Chaoxing often nests the actual answer controls inside an unnumbered
+      // .TiMu element. Prefer the nearest numbered wrapper, but only when that
+      // wrapper belongs to this single leaf (section wrappers contain many).
+      const wrapper = candidates
+        .filter((candidate) => candidate !== leaf && candidate.contains(leaf) && questionIndexFromContainer(candidate))
+        .filter((candidate) => leaves.filter((item) => candidate.contains(item)).length === 1)
+        .sort((a, b) => {
+          const aDepth = a.querySelectorAll("*").length;
+          const bDepth = b.querySelectorAll("*").length;
+          return aDepth - bDepth;
+        })[0];
+      return wrapper ?? leaf;
+    });
+    return [...new Set(resolved)]
       .map((element, order) => ({ element, order, index: questionIndexFromContainer(element) }))
       .sort((a, b) => (a.index ?? Number.MAX_SAFE_INTEGER) - (b.index ?? Number.MAX_SAFE_INTEGER) || a.order - b.order)
       .map(({ element }) => element);
@@ -200,6 +215,17 @@ function questionDomFromContainer(container: HTMLElement): QuestionDom | null {
     container,
     optionElements,
   };
+}
+
+function orderedQuestionDoms(): QuestionDom[] {
+  return candidateContainers()
+    .map((container) => questionDomFromContainer(container))
+    .filter((item): item is QuestionDom => Boolean(item))
+    .sort((a, b) => (a.question.pageIndex ?? Number.MAX_SAFE_INTEGER) - (b.question.pageIndex ?? Number.MAX_SAFE_INTEGER));
+}
+
+function questionDomById(questionId: string): QuestionDom | null {
+  return orderedQuestionDoms().find((item) => item.question.id === questionId) ?? null;
 }
 
 function containerAnswered(container: HTMLElement): boolean {
@@ -311,6 +337,14 @@ export function extractCurrentQuestion(preferSelection = true): QuestionDom | nu
   return questionDomFromContainer(container);
 }
 
+export function extractNextUnprocessedQuestion(excludedQuestionIds: ReadonlySet<string> = new Set()): QuestionDom | null {
+  const target = orderedQuestionDoms().find((item) => !excludedQuestionIds.has(item.question.id));
+  if (!target) return null;
+  preferredQuestionId = target.question.id;
+  target.container.scrollIntoView({ behavior: "auto", block: "center" });
+  return target;
+}
+
 function optionIsSelected(element: HTMLElement): boolean {
   const input = element.matches("input") ? element as HTMLInputElement : element.querySelector<HTMLInputElement>("input[type=radio], input[type=checkbox]");
   if (input?.checked) return true;
@@ -327,7 +361,7 @@ async function clickAndVerifyOption(questionId: string, key: string, element: HT
   while (Date.now() - started < 700) {
     await new Promise((resolve) => window.setTimeout(resolve, 60));
     if (element.isConnected && optionIsSelected(element)) return true;
-    const current = extractCurrentQuestion(false);
+    const current = questionDomById(questionId);
     if (!current || current.question.id !== questionId) continue;
     const index = current?.question.options.findIndex((option) => option.key === key) ?? -1;
     const currentElement = index >= 0 ? current?.optionElements[index] : undefined;
@@ -336,8 +370,8 @@ async function clickAndVerifyOption(questionId: string, key: string, element: HT
   return false;
 }
 
-export async function applySuggestedOptions(result: AnalysisResult): Promise<{ applied: number; missing: string[] }> {
-  const current = extractCurrentQuestion(false);
+export async function applySuggestedOptions(result: AnalysisResult, expectedQuestionId?: string): Promise<{ applied: number; missing: string[] }> {
+  const current = expectedQuestionId ? questionDomById(expectedQuestionId) : extractCurrentQuestion(false);
   if (!current) return { applied: 0, missing: result.suggestedOptions };
   let applied = 0;
   const missing: string[] = [];
@@ -359,6 +393,15 @@ function buttonText(element: HTMLElement): string {
 }
 
 export function clickNextQuestion(excludedQuestionIds: ReadonlySet<string> = new Set()): boolean {
+  const questions = orderedQuestionDoms();
+  if (questions.length > 1) {
+    const next = questions.find((item) => !excludedQuestionIds.has(item.question.id));
+    if (!next) return false;
+    preferredQuestionId = next.question.id;
+    next.container.scrollIntoView({ behavior: "auto", block: "center" });
+    return true;
+  }
+
   const elements = uniqueElements(["button", "a", "input[type=button]", "[role=button]"]);
   const target = elements.find((element) => {
     const text = buttonText(element);
@@ -371,20 +414,7 @@ export function clickNextQuestion(excludedQuestionIds: ReadonlySet<string> = new
     return true;
   }
 
-  const containers = candidateContainers();
-  const current = chooseContainer();
-  const currentIndex = current ? containers.indexOf(current) : -1;
-  const ordered = currentIndex >= 0
-    ? [...containers.slice(currentIndex + 1), ...containers.slice(0, currentIndex)]
-    : containers;
-  const next = ordered.find((container) => {
-    const questionId = questionDomFromContainer(container)?.question.id;
-    return !questionId || !excludedQuestionIds.has(questionId);
-  });
-  if (!next || next === current) return false;
-  preferredQuestionId = questionDomFromContainer(next)?.question.id ?? null;
-  next.scrollIntoView({ behavior: "auto", block: "center" });
-  return true;
+  return false;
 }
 
 export function hasFinalSubmit(): boolean {
