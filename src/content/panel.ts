@@ -26,3 +26,7 @@ export function clampPanelOpacity(value: number): number {
 export function clampPanelScale(value: number): number {
   return Math.max(0.75, Math.min(1.25, value));
 }
+
+export function shouldCollapsePanel(isTrusted: boolean, eventPath: readonly EventTarget[], panel: EventTarget | null): boolean {
+  return isTrusted && panel != null && !eventPath.includes(panel);
+}

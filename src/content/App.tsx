@@ -8,7 +8,7 @@ import type { AnalysisResult, AnswerRunStats, CourseSessionState, DetectedTaskSt
 import { applySuggestedOptions, clickNextQuestion, detectCourseId, extractCurrentQuestion, focusFirstUnansweredQuestion, inspectQuestionPage } from "./question";
 import { advanceToNextLesson, initializePlaybackFrame } from "./playback";
 import { clampLauncherPosition, launcherMovementExceeded, snapLauncherPosition, type LauncherPoint } from "./launcher";
-import { clampPanelOpacity, clampPanelPosition, clampPanelScale } from "./panel";
+import { clampPanelOpacity, clampPanelPosition, clampPanelScale, shouldCollapsePanel } from "./panel";
 import { isLikelyCoursePage, pageHasBlockingPrompt, pageHasTextTask, pageShowsTaskCompleted, selectPageTask, type PageTaskKind } from "./task";
 
 const LAUNCHER_POSITION_KEY = "learnpilot.launcherPosition";
@@ -101,6 +101,7 @@ export function App() {
   const panelOpacityRef = useRef(panelOpacity);
   const panelScaleRef = useRef(panelScale);
   const panelDisplayLoadedRef = useRef(false);
+  const panelOpenLoadedRef = useRef(false);
   const panelDragRef = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number; lastX: number; lastY: number } | null>(null);
 
   const updateLauncherPosition = useCallback((next: LauncherPoint) => {
@@ -505,6 +506,20 @@ export function App() {
   }, [panelSize, savePanelDisplay, updatePanelPosition]);
 
   useEffect(() => {
+    const key = `learnpilot.panelOpen:${courseId}`;
+    void chrome.storage.session.get(key).then((stored) => {
+      panelOpenLoadedRef.current = true;
+      if (stored[key] === true) setOpen(true);
+    });
+  }, [courseId]);
+
+  useEffect(() => {
+    if (!panelOpenLoadedRef.current) return;
+    const key = `learnpilot.panelOpen:${courseId}`;
+    void chrome.storage.session.set({ [key]: open });
+  }, [courseId, open]);
+
+  useEffect(() => {
     if (!open) {
       setDisplayMenuOpen(false);
       setApiMenuOpen(false);
@@ -518,7 +533,7 @@ export function App() {
     if (!open) return undefined;
     const collapseOnOutsidePointer = (event: globalThis.PointerEvent) => {
       const panel = panelRef.current;
-      if (!panel || event.composedPath().includes(panel)) return;
+      if (!shouldCollapsePanel(event.isTrusted, event.composedPath(), panel)) return;
       setDisplayMenuOpen(false);
       setApiMenuOpen(false);
       setOpen(false);

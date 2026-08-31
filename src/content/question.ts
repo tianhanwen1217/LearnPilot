@@ -49,6 +49,32 @@ export function parseQuestionIndex(text: string): number | undefined {
   return value > 0 ? value : undefined;
 }
 
+export function parseQuestionTotal(text: string): number | undefined {
+  const values = [...cleanVisibleText(text).matchAll(/共\s*(\d{1,4})\s*题/g)]
+    .map((match) => Number(match[1]))
+    .filter((value) => value > 0);
+  return values.length ? Math.max(...values) : undefined;
+}
+
+export function consecutiveQuestionTotal(values: Iterable<number>): number | undefined {
+  const numbers = new Set([...values].filter((value) => Number.isInteger(value) && value > 0 && value <= 500));
+  let total = 0;
+  while (numbers.has(total + 1)) total += 1;
+  return total >= 2 ? total : undefined;
+}
+
+function answerNavigatorTotal(): number | undefined {
+  const elements = uniqueElements([
+    "button", "a", "[role=button]", "[class*='num']", "[class*='Num']",
+    "[class*='index']", "[class*='Index']", "[class*='answer']", "[class*='Answer']",
+    "[class*='answer'] *", "[class*='Answer'] *", "[class*='card'] *", "[class*='Card'] *",
+  ]);
+  return consecutiveQuestionTotal(elements.slice(0, 1200).flatMap((element) => {
+    const text = cleanVisibleText(element.innerText);
+    return /^\d{1,3}$/.test(text) ? [Number(text)] : [];
+  }));
+}
+
 function questionIndexFromContainer(container: HTMLElement): number | undefined {
   for (const name of ["data-question-index", "data-index", "data-order", "data-num"]) {
     const value = Number(container.getAttribute(name));
@@ -215,8 +241,17 @@ export function inspectQuestionPage(): QuestionPageSummary | null {
   });
   const pageText = cleanVisibleText(document.body.innerText);
   const progress = pageText.match(/第\s*(\d+)\s*[\/／]\s*(\d+)\s*题/);
+  const visibleCurrent = items.find((item) => item.current)?.index ?? items[0]?.index ?? 1;
+  const hintedCurrent = progress ? Number(progress[1]) : visibleCurrent;
+  const hintedTotal = Math.max(
+    items.length,
+    hintedCurrent,
+    progress ? Number(progress[2]) : 0,
+    parseQuestionTotal(pageText) ?? 0,
+    answerNavigatorTotal() ?? 0,
+  );
   return {
-    ...summarizeQuestionItems(items, progress ? Number(progress[2]) : items.length, progress ? Number(progress[1]) : 1),
+    ...summarizeQuestionItems(items, hintedTotal, hintedCurrent),
     encryptedText: Boolean(document.querySelector(".font-cxsecret, [class*='font-cxsecret']")),
   };
 }

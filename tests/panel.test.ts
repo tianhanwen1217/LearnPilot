@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clampPanelOpacity, clampPanelPosition, clampPanelScale } from "../src/content/panel";
+import { clampPanelOpacity, clampPanelPosition, clampPanelScale, shouldCollapsePanel } from "../src/content/panel";
 
 describe("movable panel display", () => {
   it("keeps the scaled panel inside the viewport", () => {
@@ -15,5 +15,12 @@ describe("movable panel display", () => {
     expect(clampPanelOpacity(2)).toBe(1);
     expect(clampPanelScale(0.2)).toBe(0.75);
     expect(clampPanelScale(3)).toBe(1.25);
+  });
+
+  it("collapses only for trusted pointer events outside the panel", () => {
+    const panel = {} as EventTarget;
+    expect(shouldCollapsePanel(true, [{} as EventTarget], panel)).toBe(true);
+    expect(shouldCollapsePanel(true, [panel], panel)).toBe(false);
+    expect(shouldCollapsePanel(false, [{} as EventTarget], panel)).toBe(false);
   });
 });
