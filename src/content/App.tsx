@@ -4,7 +4,7 @@ import { courseSessionKey } from "../shared/defaults";
 import { effectiveConfidenceThreshold } from "../shared/confidence";
 import { applyProviderPreset, detectApiProvider } from "../shared/providers";
 import { getSettings, saveSettings } from "../shared/storage";
-import type { AnalysisResult, AnswerRunStats, CourseSessionState, DetectedTaskState, ExtractedQuestion, MessageResponse, QuestionPageSummary, QuestionType, RuntimeMessage, TabAutomationState, VideoProgress } from "../shared/types";
+import type { AnalysisResult, AnswerRunStats, CourseSessionState, DetectedTaskState, ExtractedQuestion, MessageResponse, QuestionPageSummary, RuntimeMessage, TabAutomationState, VideoProgress } from "../shared/types";
 import { applySuggestedOptions, clickNextQuestion, detectCourseId, extractCurrentQuestion, focusFirstUnansweredQuestion, inspectQuestionPage } from "./question";
 import { advanceToNextLesson, initializePlaybackFrame } from "./playback";
 import { clampLauncherPosition, launcherMovementExceeded, snapLauncherPosition, type LauncherPoint } from "./launcher";
@@ -14,15 +14,6 @@ import { isLikelyCoursePage, pageHasBlockingPrompt, pageHasTextTask, pageShowsTa
 const LAUNCHER_POSITION_KEY = "learnpilot.launcherPosition";
 const PANEL_DISPLAY_KEY = "learnpilot.panelDisplay";
 const LAUNCHER_EDGE_OFFSET = 30;
-const QUESTION_TYPE_LABELS: Record<QuestionType, string> = {
-  single: "单选题",
-  multiple: "多选题",
-  true_false: "判断题",
-  fill: "填空题",
-  short: "简答题",
-  unknown: "其他题型",
-};
-
 function launcherViewport() {
   return { width: window.innerWidth, height: window.innerHeight };
 }
@@ -95,6 +86,7 @@ export function App() {
   const taskKindRef = useRef<PageTaskKind>("idle");
   const videoSignalRef = useRef<{ progress: VideoProgress; receivedAt: number } | null>(null);
   const remoteTaskRef = useRef<{ state: DetectedTaskState; message: string; frameId: number; receivedAt: number; questionSummary?: QuestionPageSummary; answerStats?: AnswerRunStats } | null>(null);
+  const answerFrameIdRef = useRef<number | null>(null);
   const answerStatsRef = useRef<AnswerRunStats>(emptyAnswerRunStats());
   const processedQuestionIdsRef = useRef(new Set<string>());
   const lastTaskUrlRef = useRef(location.href);
@@ -229,7 +221,8 @@ export function App() {
           if (!clickNextQuestion(processedQuestionIdsRef.current)) await stopAuto(answerRunSummary(answerStatsRef.current, inspectQuestionPage()?.total));
           continue;
         }
-        updateAnswerStats(setCurrentQuestion(answerStatsRef.current, currentQuestion.question.id));
+        const currentIndex = inspectQuestionPage()?.currentIndex;
+        updateAnswerStats(setCurrentQuestion(answerStatsRef.current, currentQuestion.question.id, currentIndex));
         const analyzed = await analyzeCurrentQuestion();
         if (!autoRef.current || assistantPausedRef.current) return;
         if ("error" in analyzed) {
@@ -267,7 +260,7 @@ export function App() {
           continue;
         }
         processedQuestionIdsRef.current.add(analyzed.question.id);
-        updateAnswerStats(recordAnswered(answerStatsRef.current, analyzed.question.id));
+        updateAnswerStats(recordAnswered(answerStatsRef.current, analyzed.question.id, currentIndex));
         setStatus(`已勾选 ${analyzed.result.suggestedOptions.join("、")}；已答完 ${answerStatsRef.current.answered}，存疑 ${answerStatsRef.current.skipped}`);
         if (!await advanceOrFinish(analyzed.question, settings)) return;
       }
@@ -284,6 +277,7 @@ export function App() {
     autoRef.current = true;
     pausedReasonRef.current = "";
     processedQuestionIdsRef.current = new Set();
+    answerFrameIdRef.current = null;
     updateAnswerStats(emptyAnswerRunStats());
     focusFirstUnansweredQuestion(processedQuestionIdsRef.current);
     setAutoAnswer(true);
@@ -329,12 +323,20 @@ export function App() {
         setStatus(message.state.paused ? "助手已暂停" : "助手已继续，正在识别课程内容…");
       }
       if (message.type === "PAGE_TASK_STATE") {
+        const incomingStats = message.answerStats;
+        const incomingHasRun = Boolean(incomingStats && (incomingStats.processed > 0 || incomingStats.currentQuestionId));
+        if (message.state === "question" && answerFrameIdRef.current == null && incomingHasRun) {
+          answerFrameIdRef.current = message.frameId;
+        }
+        if (message.state === "question" && answerFrameIdRef.current != null && message.frameId !== answerFrameIdRef.current) {
+          return undefined;
+        }
         const current = remoteTaskRef.current;
         if (message.state !== "idle" || !current || current.state === "idle" || Date.now() - current.receivedAt > 5000) {
           remoteTaskRef.current = { state: message.state, message: message.message, frameId: message.frameId, receivedAt: Date.now(), questionSummary: message.questionSummary, answerStats: message.answerStats };
           setTaskKind(message.state);
           setQuestionSummary(message.state === "question" ? message.questionSummary ?? null : null);
-          if (message.answerStats) updateAnswerStats(message.answerStats);
+          if (incomingStats && incomingStats.processed >= answerStatsRef.current.processed) updateAnswerStats(incomingStats);
         }
       }
       if (message.type === "PAGE_AUTO_STOPPED") {
@@ -701,17 +703,14 @@ export function App() {
     if (launcherDragRef.current?.pointerId === event.pointerId) cancelLauncherDrag(event);
   };
 
-  const questionGroups = questionSummary
-    ? (["single", "multiple", "true_false", "fill", "short", "unknown"] as QuestionType[])
-      .map((type) => ({ type, items: questionSummary.items.filter((item) => item.type === type) }))
-      .filter((group) => group.items.length)
-    : [];
+  const questionItems = questionSummary?.items.slice().sort((a, b) => a.index - b.index) ?? [];
   const skippedQuestionIds = new Set(answerStats.failures.map((item) => item.questionId));
+  const skippedQuestionIndexes = new Set(answerStats.failures.flatMap((item) => item.index ? [item.index] : []));
   const answeredQuestionIds = new Set(answerStats.answeredQuestionIds);
+  const answeredQuestionIndexes = new Set(answerStats.answeredQuestionIndexes ?? []);
   const totalQuestions = questionSummary?.total ?? 1;
-  const detectedAnswered = questionSummary?.items.filter((item) => item.answered || Boolean(item.id && answeredQuestionIds.has(item.id))).length ?? 0;
-  const answeredQuestions = Math.max(questionSummary?.answered ?? 0, detectedAnswered, answerStats.answered);
-  const doubtfulQuestions = answerStats.failures.filter((failure) => !answeredQuestionIds.has(failure.questionId)).length;
+  const answeredQuestions = questionItems.filter((item) => !skippedQuestionIndexes.has(item.index) && (item.answered || answeredQuestionIndexes.has(item.index) || Boolean(item.id && answeredQuestionIds.has(item.id)))).length;
+  const doubtfulQuestions = questionItems.filter((item) => skippedQuestionIndexes.has(item.index) || Boolean(item.id && skippedQuestionIds.has(item.id))).length;
   const pendingQuestions = Math.max(0, totalQuestions - answeredQuestions - doubtfulQuestions);
   const completedQuestions = Math.min(totalQuestions, answeredQuestions + doubtfulQuestions);
 
@@ -743,14 +742,14 @@ export function App() {
     {taskKind === "question" ? <section className="question-workspace" aria-busy={busy}>
       <div className="question-overview"><strong>共 {totalQuestions} 题</strong><span><i className="answered-dot" />已答 {answeredQuestions}<i className="skipped-dot" />存疑 {doubtfulQuestions}<i className="pending-dot" />待答 {pendingQuestions}</span></div>
       <div className="question-progress" aria-label={`已处理 ${completedQuestions} / ${totalQuestions}`}><i style={{ width: `${(completedQuestions / Math.max(1, totalQuestions)) * 100}%` }} /></div>
-      <div className="question-groups">{questionGroups.map((group) => <section key={group.type}><h3>{QUESTION_TYPE_LABELS[group.type]} <small>({group.items.length})</small></h3><div className="question-grid">{group.items.map((item) => {
-        const isDoubtful = Boolean(item.id && skippedQuestionIds.has(item.id));
-        const isAnswered = !isDoubtful && (item.answered || Boolean(item.id && answeredQuestionIds.has(item.id)));
-        const isProcessing = !isDoubtful && !isAnswered && autoAnswer && Boolean(item.id && item.id === answerStats.currentQuestionId);
+      <div className="question-groups"><section><h3>全部题目 <small>({totalQuestions})</small></h3><div className="question-grid">{questionItems.map((item) => {
+        const isDoubtful = skippedQuestionIndexes.has(item.index) || Boolean(item.id && skippedQuestionIds.has(item.id));
+        const isAnswered = !isDoubtful && (item.answered || answeredQuestionIndexes.has(item.index) || Boolean(item.id && answeredQuestionIds.has(item.id)));
+        const isProcessing = !isDoubtful && !isAnswered && autoAnswer && (item.index === answerStats.currentQuestionIndex || Boolean(item.id && item.id === answerStats.currentQuestionId));
         const stateClass = isDoubtful ? "skipped" : isAnswered ? "answered" : isProcessing ? "processing" : "";
         const stateLabel = isDoubtful ? " · 存疑" : isAnswered ? " · 已答完" : isProcessing ? " · 正在处理" : " · 待答";
         return <span key={item.index} className={stateClass} title={`第 ${item.index} 题${stateLabel}`}>{item.index}</span>;
-      })}</div></section>)}</div>
+      })}</div></section></div>
       <button type="button" className={`question-start${autoAnswer ? " running" : ""}`} disabled={busy} onClick={() => void updateAutoAnswer(!autoAnswer)}>{busy ? "正在处理…" : autoAnswer ? "停止答题" : "开始答题"}</button>
       {(answerStats.processed > 0 || answerStats.skipped > 0) && <div className="answer-stats"><span>已处理 {answerStats.processed}/{totalQuestions}</span><b>已答完 {answerStats.answered}</b><em>存疑 {answerStats.skipped}</em></div>}
       <p className={`question-live-status${/失败|错误|未识别|没有|无法|低于|请先|已停止/.test(status) ? " error" : ""}`}>{status}</p>

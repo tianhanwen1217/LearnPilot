@@ -146,7 +146,8 @@ async function processFrameQuestion(): Promise<void> {
       if (!clickNextQuestion(frameProcessedQuestionIds)) await stopFrameAuto(answerRunSummary(frameAnswerStats, inspectQuestionPage()?.total));
     };
 
-    frameAnswerStats = setCurrentQuestion(frameAnswerStats, extracted.question.id);
+    const currentIndex = inspectQuestionPage()?.currentIndex;
+    frameAnswerStats = setCurrentQuestion(frameAnswerStats, extracted.question.id, currentIndex);
     reportFrameState("question", "正在分析当前题目…", true, inspectQuestionPage() ?? undefined, frameAnswerStats);
     const response = await chrome.runtime.sendMessage({ type: "ANALYZE_QUESTION", question: extracted.question } satisfies RuntimeMessage) as MessageResponse<AnalysisResult>;
     if (!response.ok || !response.data) {
@@ -163,7 +164,7 @@ async function processFrameQuestion(): Promise<void> {
     const applied = applySuggestedOptions(response.data);
     if (!applied.applied || applied.missing.length) return void await skipAndContinue(`答案为 ${response.data.suggestedOptions.join("、")}，但页面选项匹配失败${applied.missing.length ? `（缺少 ${applied.missing.join("、")}）` : ""}`);
     frameProcessedQuestionIds.add(extracted.question.id);
-    frameAnswerStats = recordAnswered(frameAnswerStats, extracted.question.id);
+    frameAnswerStats = recordAnswered(frameAnswerStats, extracted.question.id, currentIndex);
     reportFrameState("question", `已勾选 ${response.data.suggestedOptions.join("、")}；已答完 ${frameAnswerStats.answered}，存疑 ${frameAnswerStats.skipped}`, true, inspectQuestionPage() ?? undefined, frameAnswerStats);
     await new Promise((resolve) => window.setTimeout(resolve, settings.autoNextDelayMs));
     if (frameAutomation.paused || !frameAutomation.autoAnswer) return;

@@ -38,6 +38,20 @@ function uniqueElements(selectors: string[], root: ParentNode = document): HTMLE
   return [...root.querySelectorAll(selectors.join(","))].filter(isVisible);
 }
 
+export function parseQuestionIndex(text: string): number | undefined {
+  const match = cleanVisibleText(text).match(/^\s*(?:第\s*)?(\d{1,4})\s*(?:题|[.．、)）])/);
+  const value = match ? Number(match[1]) : 0;
+  return value > 0 ? value : undefined;
+}
+
+function questionIndexFromContainer(container: HTMLElement): number | undefined {
+  for (const name of ["data-question-index", "data-index", "data-order", "data-num"]) {
+    const value = Number(container.getAttribute(name));
+    if (Number.isInteger(value) && value > 0) return value;
+  }
+  return parseQuestionIndex(container.innerText);
+}
+
 function stripOptionPrefix(value: string): string {
   return cleanVisibleText(value).replace(/^\s*[A-H][.、．:：)）]\s*/i, "");
 }
@@ -62,7 +76,11 @@ function optionKey(element: HTMLElement, index: number): string {
 function candidateContainers(): HTMLElement[] {
   const candidates = uniqueElements(CONTAINER_SELECTORS);
   if (candidates.length) {
-    return candidates.filter((element) => !candidates.some((other) => other !== element && element.contains(other) && other.innerText.length > 20));
+    const leafCandidates = candidates.filter((element) => !candidates.some((other) => other !== element && element.contains(other) && other.innerText.length > 20));
+    return leafCandidates
+      .map((element, order) => ({ element, order, index: questionIndexFromContainer(element) }))
+      .sort((a, b) => (a.index ?? Number.MAX_SAFE_INTEGER) - (b.index ?? Number.MAX_SAFE_INTEGER) || a.order - b.order)
+      .map(({ element }) => element);
   }
   return uniqueElements(["form", "main", "article"]).filter((element) => element.querySelector("input[type=radio], input[type=checkbox]"));
 }
@@ -146,18 +164,17 @@ function containerAnswered(container: HTMLElement): boolean {
 
 export function summarizeQuestionItems(items: QuestionPageItem[], hintedTotal = items.length, hintedCurrent = 1): QuestionPageSummary {
   const total = Math.max(items.length, hintedTotal, 1);
-  if (items.length === 1 && total > 1) {
-    const currentIndex = Math.max(1, Math.min(total, hintedCurrent));
-    const current = items[0];
-    const expanded = Array.from({ length: total }, (_, offset): QuestionPageItem => ({
-      index: offset + 1,
-      type: offset + 1 === currentIndex ? current.type : "unknown",
-      answered: offset + 1 === currentIndex ? current.answered : false,
-      current: offset + 1 === currentIndex,
-    }));
-    return { total, answered: expanded.filter((item) => item.answered).length, currentIndex, items: expanded, encryptedText: false };
-  }
-  const normalized = items.map((item, offset) => ({ ...item, index: offset + 1 }));
+  const singleCurrentIndex = items.length === 1 && total > 1 ? Math.max(1, Math.min(total, hintedCurrent)) : undefined;
+  const byIndex = new Map((singleCurrentIndex ? [] : items)
+    .filter((item) => item.index >= 1 && item.index <= total)
+    .map((item) => [item.index, item] as const));
+  const normalized = Array.from({ length: total }, (_, offset): QuestionPageItem => {
+    const index = offset + 1;
+    const exact = byIndex.get(index);
+    if (exact) return exact;
+    if (singleCurrentIndex === index) return { ...items[0], index, current: true };
+    return { index, type: "unknown", answered: false, current: false };
+  });
   const currentIndex = normalized.find((item) => item.current)?.index ?? Math.max(1, Math.min(total, hintedCurrent));
   return { total, answered: normalized.filter((item) => item.answered).length, currentIndex, items: normalized, encryptedText: false };
 }
@@ -170,7 +187,7 @@ export function inspectQuestionPage(): QuestionPageSummary | null {
     const parsed = questionDomFromContainer(container);
     return {
       id: parsed?.question.id,
-      index: offset + 1,
+      index: questionIndexFromContainer(container) ?? offset + 1,
       type: parsed?.question.type ?? "unknown",
       answered: containerAnswered(container),
       current: container === currentContainer || /(?:active|current|\bcur\b)/i.test(container.className.toString()),

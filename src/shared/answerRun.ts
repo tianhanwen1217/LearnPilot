@@ -1,21 +1,25 @@
 import type { AnswerRunStats } from "./types";
 
 export function emptyAnswerRunStats(): AnswerRunStats {
-  return { answered: 0, skipped: 0, processed: 0, answeredQuestionIds: [], failures: [] };
+  return { answered: 0, skipped: 0, processed: 0, answeredQuestionIds: [], answeredQuestionIndexes: [], failures: [] };
 }
 
-export function setCurrentQuestion(stats: AnswerRunStats, questionId: string): AnswerRunStats {
-  return { ...stats, currentQuestionId: questionId };
+export function setCurrentQuestion(stats: AnswerRunStats, questionId: string, index?: number): AnswerRunStats {
+  return { ...stats, currentQuestionId: questionId, currentQuestionIndex: index };
 }
 
-export function recordAnswered(stats: AnswerRunStats, questionId: string): AnswerRunStats {
+export function recordAnswered(stats: AnswerRunStats, questionId: string, index?: number): AnswerRunStats {
   if (stats.answeredQuestionIds.includes(questionId)) return stats;
   return {
     ...stats,
     answered: stats.answered + 1,
     processed: stats.processed + 1,
     answeredQuestionIds: [...stats.answeredQuestionIds, questionId],
+    answeredQuestionIndexes: index && !stats.answeredQuestionIndexes.includes(index)
+      ? [...stats.answeredQuestionIndexes, index]
+      : stats.answeredQuestionIndexes,
     currentQuestionId: undefined,
+    currentQuestionIndex: undefined,
   };
 }
 
@@ -26,6 +30,7 @@ export function recordSkipped(stats: AnswerRunStats, questionId: string, reason:
     skipped: stats.skipped + 1,
     processed: stats.processed + 1,
     currentQuestionId: undefined,
+    currentQuestionIndex: undefined,
     failures: [...stats.failures, { questionId, reason, index }],
   };
 }
