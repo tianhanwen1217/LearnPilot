@@ -63,16 +63,43 @@ export function consecutiveQuestionTotal(values: Iterable<number>): number | und
   return total >= 2 ? total : undefined;
 }
 
+interface AnswerNavigator {
+  total: number;
+  elements: Map<number, HTMLElement>;
+}
+
+function navigatorElementScore(element: HTMLElement): number {
+  const tagBonus = element.matches("button, a, [role=button], [tabindex]") ? 100 : 0;
+  const classBonus = /(?:num|index|answer|card|item|current|answered)/i.test(element.className.toString()) ? 30 : 0;
+  const leafBonus = element.children.length === 0 ? 20 : 0;
+  const cursorBonus = getComputedStyle(element).cursor === "pointer" ? 40 : 0;
+  return tagBonus + classBonus + leafBonus + cursorBonus;
+}
+
+function detectAnswerNavigator(): AnswerNavigator | undefined {
+  const numericElements = uniqueElements(["button", "a", "[role=button]", "li", "span", "div"])
+    .slice(0, 6000)
+    .filter((element) => /^\d{1,3}$/.test(cleanVisibleText(element.innerText)));
+  const groups = new Map<HTMLElement, Map<number, HTMLElement>>();
+  for (const element of numericElements) {
+    const value = Number(cleanVisibleText(element.innerText));
+    let ancestor = element.parentElement;
+    for (let depth = 0; ancestor && depth < 9; depth += 1, ancestor = ancestor.parentElement) {
+      const values = groups.get(ancestor) ?? new Map<number, HTMLElement>();
+      const current = values.get(value);
+      if (!current || navigatorElementScore(element) > navigatorElementScore(current)) values.set(value, element);
+      groups.set(ancestor, values);
+    }
+  }
+  return [...groups.entries()].flatMap(([root, elements]) => {
+    const total = consecutiveQuestionTotal(elements.keys());
+    return total && total >= 3 ? [{ root, elements, total }] : [];
+  }).sort((a, b) => b.total - a.total || a.root.querySelectorAll("*").length - b.root.querySelectorAll("*").length)
+    .map(({ elements, total }) => ({ elements, total }))[0];
+}
+
 function answerNavigatorTotal(): number | undefined {
-  const elements = uniqueElements([
-    "button", "a", "[role=button]", "[class*='num']", "[class*='Num']",
-    "[class*='index']", "[class*='Index']", "[class*='answer']", "[class*='Answer']",
-    "[class*='answer'] *", "[class*='Answer'] *", "[class*='card'] *", "[class*='Card'] *",
-  ]);
-  return consecutiveQuestionTotal(elements.slice(0, 1200).flatMap((element) => {
-    const text = cleanVisibleText(element.innerText);
-    return /^\d{1,3}$/.test(text) ? [Number(text)] : [];
-  }));
+  return detectAnswerNavigator()?.total;
 }
 
 function questionIndexFromContainer(container: HTMLElement): number | undefined {
@@ -456,6 +483,17 @@ export function clickNextQuestion(excludedQuestionIds: ReadonlySet<string> = new
   if (target) {
     preferredQuestionId = null;
     target.click();
+    return true;
+  }
+
+  const currentIndex = questions[0]?.question.pageIndex;
+  const navigator = detectAnswerNavigator();
+  const numberedNext = currentIndex && navigator && currentIndex < navigator.total
+    ? navigator.elements.get(currentIndex + 1)
+    : undefined;
+  if (numberedNext) {
+    preferredQuestionId = null;
+    numberedNext.click();
     return true;
   }
 

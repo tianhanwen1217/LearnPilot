@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { applySuggestedOptions, clickNextQuestion, extractNextUnprocessedQuestion, limitQuestionSequence, uniqueQuestionSequence } from "../src/content/question";
+import { applySuggestedOptions, clickNextQuestion, extractNextUnprocessedQuestion, inspectQuestionPage, limitQuestionSequence, uniqueQuestionSequence } from "../src/content/question";
 import type { AnalysisResult } from "../src/shared/types";
 
 const answer: AnalysisResult = {
@@ -101,6 +101,22 @@ describe("strict multi-question DOM queue", () => {
     const limited = limitQuestionSequence([...numbered, ...falseCopies], 30);
     expect(limited).toHaveLength(30);
     expect(limited.map((item) => item.question.pageIndex)).toEqual(Array.from({ length: 30 }, (_, offset) => offset + 1));
+  });
+
+  it("reads grouped navigator totals and clicks the next number on a single-question page", () => {
+    document.body.innerHTML = `${question(25)}<aside id="answer-navigator">
+      <section>${Array.from({ length: 25 }, (_, offset) => `<span>${offset + 1}</span>`).join("")}</section>
+      <section><div class="number-shell"><span role="button">26</span></div></section>
+      <section>${Array.from({ length: 4 }, (_, offset) => `<span>${offset + 27}</span>`).join("")}</section>
+    </aside>`;
+    const next = document.querySelectorAll<HTMLElement>("#answer-navigator span")[25];
+    const clicked = vi.fn();
+    next.addEventListener("click", clicked);
+    expect(inspectQuestionPage()?.total).toBe(30);
+    const current = extractNextUnprocessedQuestion(new Set())!;
+    expect(current.question.pageIndex).toBe(25);
+    expect(clickNextQuestion(new Set([current.question.id]))).toBe(true);
+    expect(clicked).toHaveBeenCalledOnce();
   });
 
   it("accepts a stable custom visual state change as a successful selection", async () => {
