@@ -3,10 +3,11 @@ import { DEFAULT_SETTINGS } from "../src/shared/defaults";
 import { applyProviderPreset, detectApiProvider, migrateBlankLegacySettings } from "../src/shared/providers";
 
 describe("API provider presets", () => {
-  it("defaults to the DeepSeek chat completion endpoint", () => {
+  it("defaults to the DeepSeek Responses endpoint with built-in web search", () => {
     expect(detectApiProvider(DEFAULT_SETTINGS)).toBe("deepseek");
-    expect(DEFAULT_SETTINGS.model).toBe("deepseek-chat");
-    expect(DEFAULT_SETTINGS.apiMode).toBe("chat_completions");
+    expect(DEFAULT_SETTINGS.model).toBe("deepseek-v4-flash");
+    expect(DEFAULT_SETTINGS.apiMode).toBe("responses");
+    expect(DEFAULT_SETTINGS.searchMode).toBe("responses_web");
   });
 
   it("applies the OpenAI preset without replacing the key", () => {

@@ -50,7 +50,7 @@ npm run check
 - 填写服务商提供的准确模型 ID 和 API Key。
 - 点击“测试模型连接”。
 
-内置网页搜索依赖 Responses API 及支持该工具的模型。其他 OpenAI-compatible 服务如果不支持内置搜索，可切换到 Tavily，或者关闭搜索仅使用模型。OpenAI Responses 的网页搜索请求格式参照[官方 OpenAI 文档](https://developers.openai.com/api/docs/guides/tools-web-search)。
+DeepSeek 预设使用 Responses API、`deepseek-v4-flash` 与官方 `web_search` 工具；点击“测试模型连接”会真正触发一次联网搜索并检查接口返回的搜索调用记录。OpenAI 使用对应的 Responses 网页搜索格式。其他兼容服务如果不支持内置搜索，可切换到 Tavily，或者关闭搜索仅使用模型。DeepSeek 请求格式参照[官方 Responses API 文档](https://api-docs.deepseek.com/api/create-response/)，OpenAI 请求格式参照[官方网页搜索文档](https://developers.openai.com/api/docs/guides/tools-web-search)。
 
 密钥默认只保存在当前浏览器会话。若选择本机保存，密钥会存入扩展的 `chrome.storage.local`；浏览器扩展无法为它提供硬件级保护。
 

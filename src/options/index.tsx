@@ -32,6 +32,14 @@ function Options() {
   }, []);
 
   const update = <K extends keyof ExtensionSettings>(key: K, value: ExtensionSettings[K]) => setSettings((current) => ({ ...current, [key]: value }));
+  const changeSearchMode = (searchMode: ExtensionSettings["searchMode"]) => {
+    setSettings((current) => {
+      if (searchMode === "responses_web" && detectApiProvider(current) === "deepseek") {
+        return { ...current, apiMode: "responses", model: "deepseek-v4-flash", searchMode };
+      }
+      return { ...current, searchMode };
+    });
+  };
   const changeProvider = (next: ApiProvider) => {
     setProvider(next);
     setSettings((current) => applyProviderPreset(current, next));
@@ -103,7 +111,7 @@ function Options() {
             : <label className="wide"><span>API Key</span><input type="password" value={settings.apiKey} onChange={(event) => update("apiKey", event.target.value)} placeholder={provider === "deepseek" ? "填写 DeepSeek API Key" : "sk-…"} autoComplete="off" /></label>}
         </div>
         <p className="note">密钥不能可靠识别服务商，因此只会发送给你选中的平台。默认保存在本机浏览器扩展配置中，重新加载扩展后仍然保留。</p>
-        {provider === "deepseek" && <p className="provider-tip">DeepSeek 默认使用 <code>deepseek-chat</code>。仅使用 DeepSeek Key 时不会启用网页搜索；需要联网资料可在高级设置中配置 Tavily。</p>}
+        {provider === "deepseek" && <p className="provider-tip">DeepSeek 默认使用 <code>deepseek-v4-flash</code> Responses API，并可直接调用官方联网搜索；测试连接会实际验证搜索是否执行。</p>}
       </section>
 
       <details className="advanced" open={advancedOpen} onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}>
@@ -121,9 +129,9 @@ function Options() {
           </div>
 
           <div className="advanced-section">
-            <div className="section-title compact"><span>03</span><div><h2>联网检索</h2><p>DeepSeek 使用 Tavily 才能独立搜索网页</p></div></div>
+            <div className="section-title compact"><span>03</span><div><h2>联网检索</h2><p>优先使用服务商内置搜索，Tavily 作为兼容回退</p></div></div>
             <div className="form-grid">
-              <label><span>搜索方式</span><select value={settings.searchMode} onChange={(event) => update("searchMode", event.target.value as ExtensionSettings["searchMode"])}><option value="responses_web">Responses 内置网页搜索</option><option value="tavily">Tavily 搜索 API</option><option value="none">关闭联网搜索</option></select></label>
+              <label><span>搜索方式</span><select value={settings.searchMode} onChange={(event) => changeSearchMode(event.target.value as ExtensionSettings["searchMode"])}><option value="responses_web">服务商内置网页搜索</option><option value="tavily">Tavily 搜索 API</option><option value="none">关闭联网搜索</option></select></label>
               <NumberField label="最多搜索结果" value={settings.maxSearchResults} min={1} max={10} onChange={(value) => update("maxSearchResults", value)} />
               {settings.searchMode === "tavily" && <label className="wide"><span>Tavily API Key</span><input type="password" value={settings.tavilyApiKey} onChange={(event) => update("tavilyApiKey", event.target.value)} autoComplete="off" /></label>}
             </div>

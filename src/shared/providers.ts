@@ -5,9 +5,9 @@ export type ApiProvider = "deepseek" | "openai" | "custom";
 const PROVIDER_PRESETS: Record<Exclude<ApiProvider, "custom">, Pick<ExtensionSettings, "apiBaseUrl" | "apiMode" | "model" | "searchMode">> = {
   deepseek: {
     apiBaseUrl: "https://api.deepseek.com",
-    apiMode: "chat_completions",
-    model: "deepseek-chat",
-    searchMode: "none",
+    apiMode: "responses",
+    model: "deepseek-v4-flash",
+    searchMode: "responses_web",
   },
   openai: {
     apiBaseUrl: "https://api.openai.com/v1",

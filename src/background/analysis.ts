@@ -7,6 +7,7 @@ import type {
   ExtractedQuestion,
   SourceLink,
 } from "../shared/types";
+import { detectApiProvider } from "../shared/providers";
 
 interface ModelPayload {
   suggested_options?: unknown;
@@ -92,7 +93,9 @@ function normalizeModelResult(payload: ModelPayload, sources: SourceLink[], hasB
     : [];
   const rawConfidence = Number(payload.confidence);
   let confidence = Number.isFinite(rawConfidence) ? Math.max(0, Math.min(100, Math.round(rawConfidence))) : 45;
-  const webSourceCount = new Set(sources.filter((source) => source.kind === "web" && source.url).map((source) => source.url)).size;
+  const webSourceCount = new Set(sources
+    .filter((source) => source.kind === "web")
+    .map((source) => source.url || source.title)).size;
   if (!hasBank && webSourceCount === 0) confidence = Math.min(confidence, 62);
   else if (!hasBank && webSourceCount === 1) confidence = Math.min(confidence, 76);
   if (Array.isArray(payload.warnings) && payload.warnings.length) confidence = Math.min(confidence, 68);
@@ -157,15 +160,21 @@ async function tavilySearch(question: ExtractedQuestion, settings: ExtensionSett
   }));
 }
 
-function extractResponsesOutput(data: unknown): { text: string; sources: SourceLink[] } {
+function extractResponsesOutput(data: unknown): { text: string; sources: SourceLink[]; usedWebSearch: boolean } {
   const response = data as {
+    status?: string;
+    error?: { message?: string } | null;
+    incomplete_details?: { reason?: string } | null;
     output_text?: string;
     output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string; annotations?: Array<{ type?: string; url?: string; title?: string }> }>; action?: { sources?: Array<{ url?: string; title?: string }> } }>;
   };
+  if (response.status === "failed") throw new Error(`Responses API 返回失败：${response.error?.message || "未知原因"}`);
   const textParts: string[] = [];
   const sources = new Map<string, SourceLink>();
+  let usedWebSearch = false;
   if (response.output_text) textParts.push(response.output_text);
   for (const item of response.output ?? []) {
+    if (item.type === "web_search_call") usedWebSearch = true;
     for (const part of item.content ?? []) {
       if (part.type === "output_text" && part.text) textParts.push(part.text);
       for (const annotation of part.annotations ?? []) {
@@ -176,7 +185,29 @@ function extractResponsesOutput(data: unknown): { text: string; sources: SourceL
       if (source.url) sources.set(source.url, { title: source.title || source.url, url: source.url, kind: "web" });
     }
   }
-  return { text: textParts.join("\n"), sources: [...sources.values()] };
+  if (!textParts.length && response.status === "incomplete") {
+    throw new Error(`模型输出不完整：${response.incomplete_details?.reason || "请提高输出上限后重试"}`);
+  }
+  return { text: textParts.join("\n"), sources: [...sources.values()], usedWebSearch };
+}
+
+export function responsesWebRequestConfig(settings: ExtensionSettings, forceWebSearch = false): Record<string, unknown> {
+  if (detectApiProvider(settings) === "deepseek") {
+    return {
+      tools: [{ type: "web_search" }],
+      tool_choice: forceWebSearch ? { type: "web_search" } : "auto",
+    };
+  }
+  return {
+    tools: [{ type: "web_search_preview", search_context_size: "medium" }],
+    include: ["web_search_call.action.sources"],
+    ...(forceWebSearch ? { tool_choice: "required" } : {}),
+  };
+}
+
+interface ResponsesCallResult {
+  result: AnalysisResult;
+  usedWebSearch: boolean;
 }
 
 async function callResponses(
@@ -184,18 +215,21 @@ async function callResponses(
   settings: ExtensionSettings,
   searchResults: SearchResult[],
   bankMatch?: BankMatch,
-): Promise<AnalysisResult> {
+  forceWebSearch = false,
+): Promise<ResponsesCallResult> {
   const useWeb = settings.searchMode === "responses_web";
+  const provider = detectApiProvider(settings);
   const body: Record<string, unknown> = {
     model: settings.model,
-    store: false,
     instructions: "你是严谨的学习题分析助手。必须区分可靠资料与推测，并严格按用户要求输出 JSON。",
     input: makePrompt(question, searchResults, bankMatch),
     max_output_tokens: settings.analysisMode === "detailed" ? 1400 : 700,
+    text: { format: { type: "json_object" } },
   };
+  if (provider !== "deepseek") body.store = false;
+  if (provider === "deepseek") body.reasoning = { effort: "low" };
   if (useWeb) {
-    body.tools = [{ type: "web_search_preview", search_context_size: "medium" }];
-    body.include = ["web_search_call.action.sources"];
+    Object.assign(body, responsesWebRequestConfig(settings, forceWebSearch));
   }
   const data = await requestJson(endpoint(settings.apiBaseUrl, "responses"), {
     method: "POST",
@@ -204,7 +238,13 @@ async function callResponses(
   }, settings.requestTimeoutMs);
   const output = extractResponsesOutput(data);
   const explicitSources: SourceLink[] = searchResults.map((item) => ({ title: item.title, url: item.url, snippet: item.content, score: item.score, kind: "web" }));
-  return normalizeModelResult(parseJsonObject(output.text), [...explicitSources, ...output.sources], Boolean(bankMatch));
+  if (output.usedWebSearch && output.sources.length === 0) {
+    output.sources.push({ title: provider === "deepseek" ? "DeepSeek 官方联网搜索" : "Responses 内置网页搜索", kind: "web" });
+  }
+  return {
+    result: normalizeModelResult(parseJsonObject(output.text), [...explicitSources, ...output.sources], Boolean(bankMatch)),
+    usedWebSearch: output.usedWebSearch,
+  };
 }
 
 async function callChatCompletions(
@@ -244,23 +284,28 @@ export async function analyzeQuestion(
 
   const searchResults = settings.searchMode === "tavily" ? await tavilySearch(question, settings) : [];
   return settings.apiMode === "responses"
-    ? callResponses(question, settings, searchResults, match)
+    ? (await callResponses(question, settings, searchResults, match)).result
     : callChatCompletions(question, settings, searchResults, match);
 }
 
 export async function testConnection(settings: ExtensionSettings): Promise<string> {
   if (!settings.apiKey || !settings.model) throw new Error("请填写 API Key 和模型名称。");
+  const testingWeb = settings.searchMode === "responses_web";
   const question: ExtractedQuestion = {
     id: "connection-test",
     type: "single",
-    stem: "连接测试：1+1 等于多少？",
-    options: [{ key: "A", text: "2" }, { key: "B", text: "3" }],
+    stem: testingWeb ? "联网功能测试：请搜索今天的日期，并选择 A。" : "连接测试：1+1 等于多少？",
+    options: testingWeb ? [{ key: "A", text: "已完成联网搜索" }, { key: "B", text: "未联网" }] : [{ key: "A", text: "2" }, { key: "B", text: "3" }],
     pageUrl: "extension://options",
     courseId: "connection-test",
   };
-  const safeSettings = { ...settings, searchMode: "none" as const, requestTimeoutMs: Math.min(settings.requestTimeoutMs, 20000) };
-  const result = safeSettings.apiMode === "responses"
-    ? await callResponses(question, safeSettings, [], undefined)
-    : await callChatCompletions(question, safeSettings, [], undefined);
-  return `连接成功，模型返回：${result.answerText || result.suggestedOptions.join("、")}`;
+  const safeSettings = { ...settings, requestTimeoutMs: Math.min(settings.requestTimeoutMs, 30000) };
+  if (safeSettings.apiMode === "responses") {
+    const response = await callResponses(question, safeSettings, [], undefined, testingWeb);
+    if (testingWeb && !response.usedWebSearch) throw new Error("模型连接成功，但接口没有执行联网搜索。请检查模型是否支持 web_search。");
+    return `${testingWeb ? "模型连接及官方联网搜索均成功" : "模型连接成功"}，模型返回：${response.result.answerText || response.result.suggestedOptions.join("、")}`;
+  }
+  const searchResults = safeSettings.searchMode === "tavily" ? await tavilySearch(question, safeSettings) : [];
+  const result = await callChatCompletions(question, safeSettings, searchResults, undefined);
+  return `${searchResults.length ? `模型连接及 Tavily 搜索均成功（${searchResults.length} 条结果）` : "模型连接成功"}，模型返回：${result.answerText || result.suggestedOptions.join("、")}`;
 }

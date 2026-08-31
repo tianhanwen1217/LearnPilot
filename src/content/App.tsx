@@ -814,7 +814,7 @@ export function App() {
       {apiMenuOpen && <form className="api-menu" onSubmit={(event) => void saveAndTestDeepSeek(event)} onPointerDown={(event) => event.stopPropagation()}>
         <label htmlFor="learnpilot-deepseek-key">DeepSeek API Key</label>
         <input id="learnpilot-deepseek-key" type="password" autoComplete="off" spellCheck={false} placeholder="sk-..." value={apiKeyDraft} onChange={(event) => { setApiKeyDraft(event.target.value); setApiMessage(""); setApiMessageError(false); }} autoFocus />
-        <small>固定使用 DeepSeek · deepseek-chat</small>
+        <small>DeepSeek · v4-flash · 官方联网搜索</small>
         <button type="submit" disabled={apiSaving}>{apiSaving ? "正在测试…" : "保存并测试"}</button>
         {apiMessage && <output className={apiMessageError ? "error" : ""}>{apiMessage}</output>}
       </form>}
