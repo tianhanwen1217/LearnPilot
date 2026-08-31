@@ -1,5 +1,7 @@
 import type { AnswerRunStats } from "./types";
 
+export type QuestionRunStatus = "answered" | "doubtful" | "processing" | "pending";
+
 export function emptyAnswerRunStats(): AnswerRunStats {
   return { answered: 0, skipped: 0, processed: 0, answeredQuestionIds: [], answeredQuestionIndexes: [], failures: [] };
 }
@@ -33,6 +35,16 @@ export function recordSkipped(stats: AnswerRunStats, questionId: string, reason:
     currentQuestionIndex: undefined,
     failures: [...stats.failures, { questionId, reason, index }],
   };
+}
+
+export function questionRunStatus(stats: AnswerRunStats, questionId: string | undefined, index: number, running: boolean): QuestionRunStatus {
+  const doubtful = stats.failures.some((failure) => failure.index === index || Boolean(questionId && failure.questionId === questionId));
+  if (doubtful) return "doubtful";
+  const answered = (stats.answeredQuestionIndexes ?? []).includes(index)
+    || Boolean(questionId && stats.answeredQuestionIds.includes(questionId));
+  if (answered) return "answered";
+  const processing = running && (stats.currentQuestionIndex === index || Boolean(questionId && stats.currentQuestionId === questionId));
+  return processing ? "processing" : "pending";
 }
 
 export function answerRunSummary(stats: AnswerRunStats, total?: number): string {

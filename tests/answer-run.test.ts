@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { answerRunSummary, emptyAnswerRunStats, isSystemicAnalysisError, recordAnswered, recordSkipped, setCurrentQuestion } from "../src/shared/answerRun";
+import { answerRunSummary, emptyAnswerRunStats, isSystemicAnalysisError, questionRunStatus, recordAnswered, recordSkipped, setCurrentQuestion } from "../src/shared/answerRun";
 
 describe("fault-tolerant answer run", () => {
   it("records per-question failures without ending the run", () => {
@@ -22,5 +22,15 @@ describe("fault-tolerant answer run", () => {
   it("only treats service-wide failures as terminal", () => {
     expect(isSystemicAnalysisError("接口请求失败 (401)：invalid key")).toBe(true);
     expect(isSystemicAnalysisError("置信度不足")).toBe(false);
+  });
+
+  it("uses the same run-only status for counters and question circles", () => {
+    let stats = recordAnswered(emptyAnswerRunStats(), "q1", 1);
+    stats = recordSkipped(stats, "q2", "置信度不足", 2);
+    stats = setCurrentQuestion(stats, "q3", 3);
+    expect(questionRunStatus(stats, "q1", 1, true)).toBe("answered");
+    expect(questionRunStatus(stats, "q2", 2, true)).toBe("doubtful");
+    expect(questionRunStatus(stats, "q3", 3, true)).toBe("processing");
+    expect(questionRunStatus(stats, "page-old-answer", 16, true)).toBe("pending");
   });
 });

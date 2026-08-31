@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { answerRunSummary, emptyAnswerRunStats, isSystemicAnalysisError, recordAnswered, recordSkipped, setCurrentQuestion } from "../shared/answerRun";
+import { answerRunSummary, emptyAnswerRunStats, isSystemicAnalysisError, questionRunStatus, recordAnswered, recordSkipped, setCurrentQuestion } from "../shared/answerRun";
 import { courseSessionKey } from "../shared/defaults";
 import { effectiveConfidenceThreshold } from "../shared/confidence";
 import { applyProviderPreset, detectApiProvider } from "../shared/providers";
@@ -54,6 +54,7 @@ function waitForQuestionChange(previousId: string, timeoutMs = 12000): Promise<b
 export function App() {
   const courseId = detectCourseId();
   const iconUrl = chrome.runtime.getURL("icons/learnpilot.png");
+  const extensionVersion = chrome.runtime.getManifest?.().version ?? "dev";
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState("已连接当前页面");
   const [busy, setBusy] = useState(false);
@@ -744,13 +745,10 @@ export function App() {
   };
 
   const questionItems = questionSummary?.items.slice().sort((a, b) => a.index - b.index) ?? [];
-  const skippedQuestionIds = new Set(answerStats.failures.map((item) => item.questionId));
-  const skippedQuestionIndexes = new Set(answerStats.failures.flatMap((item) => item.index ? [item.index] : []));
-  const answeredQuestionIds = new Set(answerStats.answeredQuestionIds);
-  const answeredQuestionIndexes = new Set(answerStats.answeredQuestionIndexes ?? []);
+  const questionStates = questionItems.map((item) => ({ item, state: questionRunStatus(answerStats, item.id, item.index, autoAnswer) }));
   const totalQuestions = questionSummary?.total ?? 1;
-  const answeredQuestions = questionItems.filter((item) => !skippedQuestionIndexes.has(item.index) && (answeredQuestionIndexes.has(item.index) || Boolean(item.id && answeredQuestionIds.has(item.id)))).length;
-  const doubtfulQuestions = questionItems.filter((item) => skippedQuestionIndexes.has(item.index) || Boolean(item.id && skippedQuestionIds.has(item.id))).length;
+  const answeredQuestions = questionStates.filter(({ state }) => state === "answered").length;
+  const doubtfulQuestions = questionStates.filter(({ state }) => state === "doubtful").length;
   const pendingQuestions = Math.max(0, totalQuestions - answeredQuestions - doubtfulQuestions);
   const completedQuestions = Math.min(totalQuestions, answeredQuestions + doubtfulQuestions);
 
@@ -765,7 +763,7 @@ export function App() {
     style={{ left: panelPosition.x, top: panelPosition.y, opacity: panelOpacity, transform: `scale(${panelScale})`, maxHeight: `${Math.max(240, (window.innerHeight - 32) / panelScale)}px` }}
   >
     <header className="panel-header" title="拖动此处移动面板" onPointerDown={beginPanelDrag} onPointerMove={movePanel} onPointerUp={finishPanelDrag} onPointerCancel={cancelPanelDrag} onLostPointerCapture={cancelPanelDrag}>
-      <div className="brand"><img src={iconUrl} alt="" /><div><strong>LearnPilot</strong><small title={status}>{status}</small></div></div>
+      <div className="brand"><img src={iconUrl} alt="" /><div><strong>LearnPilot <span className="brand-version">v{extensionVersion}</span></strong><small title={status}>{status}</small></div></div>
       <div className="header-actions"><button type="button" aria-expanded={displayMenuOpen} onClick={() => { setApiMenuOpen(false); setDisplayMenuOpen((value) => !value); }}>显示</button><button type="button" aria-expanded={apiMenuOpen} onClick={() => void toggleApiMenu()}>API 设置</button><button type="button" className="close-button" onClick={() => setOpen(false)} aria-label="收起">×</button></div>
       {displayMenuOpen && <div className="display-menu" onPointerDown={(event) => event.stopPropagation()}>
         <label><span>透明度 <b>{Math.round(panelOpacity * 100)}%</b></span><input type="range" min="45" max="100" step="5" value={Math.round(panelOpacity * 100)} onChange={(event) => updatePanelOpacity(Number(event.target.value) / 100)} /></label>
@@ -782,12 +780,9 @@ export function App() {
     {taskKind === "question" ? <section className="question-workspace" aria-busy={busy}>
       <div className="question-overview"><strong>共 {totalQuestions} 题</strong><span><i className="answered-dot" />已答 {answeredQuestions}<i className="skipped-dot" />存疑 {doubtfulQuestions}<i className="pending-dot" />待答 {pendingQuestions}</span></div>
       <div className="question-progress" aria-label={`已处理 ${completedQuestions} / ${totalQuestions}`}><i style={{ width: `${(completedQuestions / Math.max(1, totalQuestions)) * 100}%` }} /></div>
-      <div className="question-groups"><section><h3>全部题目 <small>({totalQuestions})</small></h3><div className="question-grid">{questionItems.map((item) => {
-        const isDoubtful = skippedQuestionIndexes.has(item.index) || Boolean(item.id && skippedQuestionIds.has(item.id));
-        const isAnswered = !isDoubtful && (item.answered || answeredQuestionIndexes.has(item.index) || Boolean(item.id && answeredQuestionIds.has(item.id)));
-        const isProcessing = !isDoubtful && !isAnswered && autoAnswer && (item.index === answerStats.currentQuestionIndex || Boolean(item.id && item.id === answerStats.currentQuestionId));
-        const stateClass = isDoubtful ? "skipped" : isAnswered ? "answered" : isProcessing ? "processing" : "";
-        const stateLabel = isDoubtful ? " · 存疑" : isAnswered ? " · 已答完" : isProcessing ? " · 正在处理" : " · 待答";
+      <div className="question-groups"><section><h3>全部题目 <small>({totalQuestions})</small></h3><div className="question-grid">{questionStates.map(({ item, state }) => {
+        const stateClass = state === "doubtful" ? "skipped" : state === "answered" ? "answered" : state === "processing" ? "processing" : "";
+        const stateLabel = state === "doubtful" ? " · 存疑" : state === "answered" ? " · 已答完" : state === "processing" ? " · 正在处理" : " · 待答";
         return <span key={item.index} className={stateClass} title={`第 ${item.index} 题${stateLabel}`}>{item.index}</span>;
       })}</div></section></div>
       <button type="button" className={`question-start${autoAnswer ? " running" : ""}`} disabled={busy} onClick={() => void updateAutoAnswer(!autoAnswer)}>{busy ? "正在处理…" : autoAnswer ? "停止答题" : "开始答题"}</button>
