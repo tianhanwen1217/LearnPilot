@@ -31,7 +31,7 @@ export interface DiagnosticsPackage {
   generatedAt: number;
   extensionVersion: string;
   runtime: {
-    automation: { autoAnswer: boolean; paused: boolean; answerFrameId?: number; processed: number; answered: number; skipped: number; failures: Array<{ index?: number; reason: string }> };
+    automation: { autoAnswer: boolean; paused: boolean; answerFrameId?: number; processed: number; answered: number; skipped: number; unanswered: number; failures: Array<{ index?: number; kind?: "doubtful" | "unanswered"; reason: string }> };
     model: { provider: string; apiMode: string; model: string; searchMode: string; confidenceThreshold: number; hasApiKey: boolean; hasTavilyApiKey: boolean };
   };
   frames: Array<FrameDiagnostics & { frameId: number }>;

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { answerRunSummary, emptyAnswerRunStats, isSystemicAnalysisError, processedQuestionIds, questionRunStatus, recordAnswered, recordSkipped, setCurrentQuestion, shouldResumeAnswerRun } from "../shared/answerRun";
+import { answerRunSummary, emptyAnswerRunStats, isSystemicAnalysisError, processedQuestionIds, questionRunStatus, recordAnswered, recordSkipped, recordUnanswered, setCurrentQuestion, shouldResumeAnswerRun } from "../shared/answerRun";
 import { courseSessionKey } from "../shared/defaults";
 import { effectiveConfidenceThreshold } from "../shared/confidence";
 import { applyProviderPreset, detectApiProvider } from "../shared/providers";
@@ -79,6 +79,7 @@ export function App() {
   const [apiSaving, setApiSaving] = useState(false);
   const [apiMessage, setApiMessage] = useState("");
   const [apiMessageError, setApiMessageError] = useState(false);
+  const [apiTested, setApiTested] = useState(false);
   const autoRef = useRef(false);
   const busyRef = useRef(false);
   const autoLoopRef = useRef(false);
@@ -196,13 +197,17 @@ export function App() {
         return true;
       };
 
-      const skipAndContinue = async (question: ExtractedQuestion, reason: string, settings: Awaited<ReturnType<typeof getSettings>>): Promise<boolean> => {
+      const markAndContinue = async (question: ExtractedQuestion, reason: string, settings: Awaited<ReturnType<typeof getSettings>>, kind: "doubtful" | "unanswered"): Promise<boolean> => {
         processedQuestionIdsRef.current.add(question.id);
         const index = question.pageIndex ?? inspectQuestionPage()?.currentIndex;
-        const stats = recordSkipped(answerStatsRef.current, question.id, reason, index);
+        const stats = kind === "doubtful"
+          ? recordSkipped(answerStatsRef.current, question.id, reason, index)
+          : recordUnanswered(answerStatsRef.current, question.id, reason, index);
         updateAnswerStats(stats);
         await persistAnswerStats(stats);
-        setStatus(`${index ? `第 ${index} 题` : "当前题"}标记存疑：${reason}；继续下一题`);
+        setStatus(kind === "doubtful"
+          ? `${index ? `第 ${index} 题` : "当前题"}已勾选并标记存疑：${reason}；请复核`
+          : `${index ? `第 ${index} 题` : "当前题"}未找到答案：${reason}；未勾选`);
         return advanceOrFinish(question, settings);
       };
 
@@ -239,30 +244,29 @@ export function App() {
             return;
           }
           const settings = await getSettings();
-          if (!await skipAndContinue(currentQuestion.question, analyzed.error, settings)) return;
+          if (!await markAndContinue(currentQuestion.question, analyzed.error, settings, "unanswered")) return;
           continue;
         }
         const settings = await getSettings();
         const confidenceThreshold = effectiveConfidenceThreshold(settings);
-        if (analyzed.result.confidence < confidenceThreshold) {
-          if (!await skipAndContinue(analyzed.question, `置信度 ${analyzed.result.confidence}% 低于阈值 ${confidenceThreshold}%`, settings)) return;
-          continue;
-        }
-        if (analyzed.result.warnings.length) {
-          if (!await skipAndContinue(analyzed.question, `模型提示：${analyzed.result.warnings[0]}`, settings)) return;
-          continue;
-        }
+        const reviewReasons: string[] = [];
+        if (analyzed.result.confidence < confidenceThreshold) reviewReasons.push(`置信度 ${analyzed.result.confidence}% 低于阈值 ${confidenceThreshold}%`);
+        if (analyzed.result.warnings.length) reviewReasons.push(`模型提示：${analyzed.result.warnings[0]}`);
         if (!analyzed.result.suggestedOptions.length) {
           const reason = analyzed.question.options.length
-            ? "模型没有返回可勾选的选项；已停止"
+            ? "模型没有返回可勾选的选项"
             : "没有识别到可勾选的选项；当前页面可能是填空/简答题或选项结构尚未适配";
-          if (!await skipAndContinue(analyzed.question, reason.replace("；已停止", ""), settings)) return;
+          if (!await markAndContinue(analyzed.question, reason, settings, "unanswered")) return;
           continue;
         }
         const applied = await applySuggestedOptions(analyzed.result, analyzed.question.id);
         if (!applied.applied || applied.missing.length) {
           const reason = `答案为 ${analyzed.result.suggestedOptions.join("、")}，但页面选项匹配失败${applied.missing.length ? `（缺少 ${applied.missing.join("、")}）` : ""}`;
-          if (!await skipAndContinue(analyzed.question, reason, settings)) return;
+          if (!await markAndContinue(analyzed.question, reason, settings, applied.applied > 0 ? "doubtful" : "unanswered")) return;
+          continue;
+        }
+        if (reviewReasons.length) {
+          if (!await markAndContinue(analyzed.question, reviewReasons.join("；"), settings, "doubtful")) return;
           continue;
         }
         processedQuestionIdsRef.current.add(analyzed.question.id);
@@ -649,6 +653,7 @@ export function App() {
     setDisplayMenuOpen(false);
     setApiMessage("");
     setApiMessageError(false);
+    setApiTested(false);
     setApiMenuOpen(true);
     const settings = await getSettings();
     setApiKeyDraft(detectApiProvider(settings) === "deepseek" ? settings.apiKey : "");
@@ -676,12 +681,13 @@ export function App() {
       const response = await chrome.runtime.sendMessage({ type: "TEST_CONNECTION", settings } satisfies RuntimeMessage) as MessageResponse<string>;
       if (!response.ok) throw new Error(response.error || "连接失败");
       const message = response.data || "连接成功";
-      setApiMessage(message);
-      setStatus("DeepSeek 已连接");
-      setApiMenuOpen(false);
+      setApiMessage(`✓ ${message}；API Key 已保存`);
+      setStatus("DeepSeek 已连接，联网测试成功");
+      setApiTested(true);
       setApiKeyDraft("");
     } catch (error) {
       setApiMessageError(true);
+      setApiTested(false);
       setApiMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setApiSaving(false);
@@ -786,8 +792,9 @@ export function App() {
   const totalQuestions = questionSummary?.total ?? 1;
   const answeredQuestions = questionStates.filter(({ state }) => state === "answered").length;
   const doubtfulQuestions = questionStates.filter(({ state }) => state === "doubtful").length;
-  const pendingQuestions = Math.max(0, totalQuestions - answeredQuestions - doubtfulQuestions);
-  const completedQuestions = Math.min(totalQuestions, answeredQuestions + doubtfulQuestions);
+  const unansweredQuestions = questionStates.filter(({ state }) => state === "unanswered").length;
+  const pendingQuestions = Math.max(0, totalQuestions - answeredQuestions - doubtfulQuestions - unansweredQuestions);
+  const completedQuestions = Math.min(totalQuestions, answeredQuestions + doubtfulQuestions + unansweredQuestions);
 
   if (!open) {
     return <button type="button" className={`floating-button${launcherDragging ? " floating-button-dragging" : ""}${launcherLaunching ? " floating-button-launching" : ""}`} style={{ left: launcherPosition.x, top: launcherPosition.y }} title="拖动位置，点击打开 LearnPilot" aria-label="拖动位置，点击打开 LearnPilot" onPointerDown={beginLauncherDrag} onPointerMove={moveLauncher} onPointerUp={finishLauncherDrag} onPointerCancel={cancelLauncherDrag} onLostPointerCapture={loseLauncherCapture} onClick={() => { if (!launcherSuppressClickRef.current) openFromLauncher(); }}><img src={iconUrl} alt="" draggable={false} /></button>;
@@ -808,30 +815,33 @@ export function App() {
         <button type="button" className="diagnostics-export" disabled={busy} onClick={() => void exportDiagnostics()}>导出诊断包</button>
         <small className="diagnostics-note">不包含输入内容、Cookie、密码或 API Key</small>
       </div>}
-      {apiMenuOpen && <form className="api-menu" onSubmit={(event) => void saveAndTestDeepSeek(event)} onPointerDown={(event) => event.stopPropagation()}>
-        <label htmlFor="learnpilot-deepseek-key">DeepSeek API Key</label>
-        <input id="learnpilot-deepseek-key" type="password" autoComplete="off" spellCheck={false} placeholder="sk-..." value={apiKeyDraft} onChange={(event) => { setApiKeyDraft(event.target.value); setApiMessage(""); setApiMessageError(false); }} autoFocus />
-        <small>DeepSeek · v4-flash · 官方联网搜索</small>
-        <button type="submit" disabled={apiSaving}>{apiSaving ? "正在测试…" : "保存并测试"}</button>
-        {apiMessage && <output className={apiMessageError ? "error" : ""}>{apiMessage}</output>}
+      {apiMenuOpen && <form className={`api-menu${apiTested ? " tested" : ""}`} onSubmit={(event) => void saveAndTestDeepSeek(event)} onPointerDown={(event) => event.stopPropagation()}>
+        {apiTested ? <>
+          <strong>DeepSeek API 已配置</strong>
+          <output>{apiMessage}</output>
+          <small>密钥输入框已隐藏；再次打开“API 设置”可重新测试或更换。</small>
+        </> : <>
+          <label htmlFor="learnpilot-deepseek-key">DeepSeek API Key</label>
+          <input id="learnpilot-deepseek-key" type="password" autoComplete="off" spellCheck={false} placeholder="sk-..." value={apiKeyDraft} onChange={(event) => { setApiKeyDraft(event.target.value); setApiMessage(""); setApiMessageError(false); }} autoFocus />
+          <small>DeepSeek · v4-flash · 官方联网搜索</small>
+          <button type="submit" disabled={apiSaving}>{apiSaving ? "正在测试…" : "保存并测试"}</button>
+          {apiMessage && <output className={apiMessageError ? "error" : ""}>{apiMessage}</output>}
+        </>}
       </form>}
     </header>
     {taskKind === "question" ? <section className="question-workspace" aria-busy={busy}>
-      <div className="question-overview"><strong>共 {totalQuestions} 题</strong><span><i className="answered-dot" />已答 {answeredQuestions}<i className="skipped-dot" />存疑 {doubtfulQuestions}<i className="pending-dot" />待答 {pendingQuestions}</span></div>
+      <div className="question-overview"><strong>共 {totalQuestions} 题</strong><span><i className="answered-dot" />已答 {answeredQuestions}<i className="skipped-dot" />存疑 {doubtfulQuestions}<i className="unanswered-dot" />未找到 {unansweredQuestions}<i className="pending-dot" />待答 {pendingQuestions}</span></div>
       <div className="question-progress" aria-label={`已处理 ${completedQuestions} / ${totalQuestions}`}><i style={{ width: `${(completedQuestions / Math.max(1, totalQuestions)) * 100}%` }} /></div>
       <div className="question-groups"><section><h3>全部题目 <small>({totalQuestions})</small></h3><div className="question-grid">{questionStates.map(({ item, state }) => {
-        const stateClass = state === "doubtful" ? "skipped" : state === "answered" ? "answered" : state === "processing" ? "processing" : "";
-        const stateLabel = state === "doubtful" ? " · 存疑" : state === "answered" ? " · 已答完" : state === "processing" ? " · 正在处理" : " · 待答";
+        const stateClass = state === "doubtful" ? "skipped" : state === "unanswered" ? "unanswered" : state === "answered" ? "answered" : state === "processing" ? "processing" : "";
+        const stateLabel = state === "doubtful" ? " · 已勾选，需复核" : state === "unanswered" ? " · 未找到，未勾选" : state === "answered" ? " · 已答完" : state === "processing" ? " · 正在处理" : " · 待答";
         return <span key={item.index} className={stateClass} title={`第 ${item.index} 题${stateLabel}`}>{item.index}</span>;
       })}</div></section></div>
-      <div className="question-actions">
-        <button type="button" className={`question-start${autoAnswer ? " running" : ""}`} disabled={!autoAnswer && busy} onClick={() => void updateAutoAnswer(!autoAnswer)}>{autoAnswer ? "停止答题" : busy ? "正在处理…" : shouldResumeAnswerRun(answerStats, totalQuestions) ? "继续答题" : "开始答题"}</button>
-        {autoAnswer && <button type="button" className={`question-pause${assistantPaused ? " paused" : ""}`} onClick={() => void toggleAssistantPaused()}>{assistantPaused ? "继续答题" : "暂停答题"}</button>}
-      </div>
-      {(completedQuestions > 0 || answerStats.processed > 0) && <div className="answer-stats"><span>已处理 {completedQuestions}/{totalQuestions}</span><b>已答完 {answeredQuestions}</b><em>存疑 {doubtfulQuestions}</em></div>}
+      <div className="question-actions"><button type="button" className={`question-start${autoAnswer ? " running" : ""}${assistantPaused ? " paused" : ""}`} disabled={!autoAnswer && busy} onClick={() => void (autoAnswer ? toggleAssistantPaused() : updateAutoAnswer(true))}>{autoAnswer ? assistantPaused ? "继续答题" : "暂停答题" : busy ? "正在处理…" : shouldResumeAnswerRun(answerStats, totalQuestions) ? "继续答题" : "开始答题"}</button></div>
+      {(completedQuestions > 0 || answerStats.processed > 0) && <div className="answer-stats"><span>已处理 {completedQuestions}/{totalQuestions}</span><b>已答完 {answeredQuestions}</b><em>存疑 {doubtfulQuestions}</em><i>未找到 {unansweredQuestions}</i></div>}
       <p className={`question-live-status${/失败|错误|未识别|没有|无法|低于|请先|已停止/.test(status) ? " error" : ""}`}>{status}</p>
-      {!autoAnswer && answerStats.failures.length > 0 && <details className="answer-report"><summary>查看存疑题目明细</summary><ul>{answerStats.failures.slice(0, 12).map((failure) => <li key={failure.questionId}>{failure.index ? `第 ${failure.index} 题：` : ""}{failure.reason}</li>)}</ul>{answerStats.failures.length > 12 && <small>另有 {answerStats.failures.length - 12} 题标记为存疑</small>}</details>}
-      <p className="question-note">按置信度自动勾选并进入下一题，最终提交仍由你点击。</p>
+      {!autoAnswer && answerStats.failures.length > 0 && <details className="answer-report"><summary>查看存疑与未找到明细</summary><ul>{answerStats.failures.slice(0, 12).map((failure) => <li key={failure.questionId}>{failure.index ? `第 ${failure.index} 题：` : ""}{failure.kind === "unanswered" ? "未找到（未勾选）" : "存疑（已勾选）"} · {failure.reason}</li>)}</ul>{answerStats.failures.length > 12 && <small>另有 {answerStats.failures.length - 12} 题需要查看</small>}</details>}
+      <p className="question-note">有建议就勾选；存疑需复核，未找到不勾选，最终提交仍由你点击。</p>
     </section> : <>
       <section className="controls" aria-busy={busy}>
         <label><span>视频倍速</span><select disabled={busy} value={playbackRate} onChange={(event) => void updateRate(Number(event.target.value))}><option value={1}>1 倍</option><option value={1.25}>1.25 倍</option><option value={1.5}>1.5 倍</option><option value={2}>2 倍</option></select></label>
@@ -839,7 +849,7 @@ export function App() {
         <label><span>自动答题</span><select disabled={busy} value={autoAnswer ? "on" : "off"} onChange={(event) => void updateAutoAnswer(event.target.value === "on")}><option value="on">是</option><option value="off">否</option></select></label>
       </section>
       <button type="button" className={`assistant-toggle${assistantPaused ? " paused" : ""}`} disabled={busy} onClick={() => void toggleAssistantPaused()}>{assistantPaused ? "继续" : "暂停"}</button>
-      <section className="instructions"><strong>操作说明</strong><ul><li>当前版本用于受支持的网页端在线课程，不处理电子书、随堂测验、下载文件或讨论课程。</li><li>手动进入视频或作业页面后，助手会自动连接当前页面。</li><li>视频正常播放完成后才会按跳转模式进入下一节。</li><li>自动答题会按设置的置信度勾选并翻题，最终提交仍由你点击。</li></ul></section>
+      <section className="instructions"><strong>操作说明</strong><ul><li>当前版本用于受支持的网页端在线课程，不处理电子书、随堂测验、下载文件或讨论课程。</li><li>手动进入视频或作业页面后，助手会自动连接当前页面。</li><li>视频正常播放完成后才会按跳转模式进入下一节。</li><li>自动答题会依次勾选并翻题；存疑答案需复核，最终提交仍由你点击。</li></ul></section>
     </>}
   </aside>;
 }

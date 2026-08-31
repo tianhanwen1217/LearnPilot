@@ -57,6 +57,13 @@ describe("strict multi-question DOM queue", () => {
     expect(document.querySelector<HTMLInputElement>("#question-2 input[value='B']")?.checked).toBe(false);
   });
 
+  it("does not partially select an answer when any suggested option is missing", async () => {
+    const first = extractNextUnprocessedQuestion(new Set())!;
+    const result = await applySuggestedOptions({ ...answer, suggestedOptions: ["A", "C"] }, first.question.id);
+    expect(result).toEqual({ applied: 0, missing: ["C"] });
+    expect(document.querySelector<HTMLInputElement>("#question-1 input[value='A']")?.checked).toBe(false);
+  });
+
   it("focuses the next queued container instead of clicking a global next button", () => {
     const first = extractNextUnprocessedQuestion(new Set());
     const globalNext = document.querySelector<HTMLButtonElement>("#global-next")!;

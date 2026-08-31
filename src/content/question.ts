@@ -445,6 +445,8 @@ async function clickAndVerifyOption(questionId: string, key: string, element: HT
 export async function applySuggestedOptions(result: AnalysisResult, expectedQuestionId?: string): Promise<{ applied: number; missing: string[] }> {
   const current = expectedQuestionId ? questionDomById(expectedQuestionId) : extractCurrentQuestion(false);
   if (!current) return { applied: 0, missing: result.suggestedOptions };
+  const unresolved = result.suggestedOptions.filter((key) => !current.question.options.some((option, index) => option.key === key && current.optionElements[index]));
+  if (unresolved.length) return { applied: 0, missing: unresolved };
   let applied = 0;
   const missing: string[] = [];
   for (const key of result.suggestedOptions) {

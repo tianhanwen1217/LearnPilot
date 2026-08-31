@@ -179,7 +179,8 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
                 processed: stats?.processed ?? 0,
                 answered: stats?.answered ?? 0,
                 skipped: stats?.skipped ?? 0,
-                failures: (stats?.failures ?? []).slice(-30).map((failure) => ({ index: failure.index, reason: sanitizeDiagnosticReason(failure.reason) })),
+                unanswered: stats?.unanswered ?? 0,
+                failures: (stats?.failures ?? []).slice(-30).map((failure) => ({ index: failure.index, kind: failure.kind, reason: sanitizeDiagnosticReason(failure.reason) })),
               },
               model: {
                 provider: detectApiProvider(settings),

@@ -1,9 +1,9 @@
 import type { AnswerRunStats } from "./types";
 
-export type QuestionRunStatus = "answered" | "doubtful" | "processing" | "pending";
+export type QuestionRunStatus = "answered" | "doubtful" | "unanswered" | "processing" | "pending";
 
 export function emptyAnswerRunStats(): AnswerRunStats {
-  return { answered: 0, skipped: 0, processed: 0, answeredQuestionIds: [], answeredQuestionIndexes: [], failures: [] };
+  return { answered: 0, skipped: 0, unanswered: 0, processed: 0, answeredQuestionIds: [], answeredQuestionIndexes: [], failures: [] };
 }
 
 export function shouldResumeAnswerRun(stats: AnswerRunStats, total?: number): boolean {
@@ -41,12 +41,27 @@ export function recordSkipped(stats: AnswerRunStats, questionId: string, reason:
     processed: stats.processed + 1,
     currentQuestionId: undefined,
     currentQuestionIndex: undefined,
-    failures: [...stats.failures, { questionId, reason, index }],
+    failures: [...stats.failures, { questionId, reason, index, kind: "doubtful" }],
+  };
+}
+
+export function recordUnanswered(stats: AnswerRunStats, questionId: string, reason: string, index?: number): AnswerRunStats {
+  if (stats.failures.some((item) => item.questionId === questionId)) return stats;
+  return {
+    ...stats,
+    unanswered: (stats.unanswered ?? 0) + 1,
+    processed: stats.processed + 1,
+    currentQuestionId: undefined,
+    currentQuestionIndex: undefined,
+    failures: [...stats.failures, { questionId, reason, index, kind: "unanswered" }],
   };
 }
 
 export function questionRunStatus(stats: AnswerRunStats, questionId: string | undefined, index: number, running: boolean): QuestionRunStatus {
-  const doubtful = stats.failures.some((failure) => failure.index === index || Boolean(questionId && failure.questionId === questionId));
+  const matchesQuestion = (failure: AnswerRunStats["failures"][number]) => failure.index === index || Boolean(questionId && failure.questionId === questionId);
+  const unanswered = stats.failures.some((failure) => failure.kind === "unanswered" && matchesQuestion(failure));
+  if (unanswered) return "unanswered";
+  const doubtful = stats.failures.some((failure) => failure.kind !== "unanswered" && matchesQuestion(failure));
   if (doubtful) return "doubtful";
   const answered = (stats.answeredQuestionIndexes ?? []).includes(index)
     || Boolean(questionId && stats.answeredQuestionIds.includes(questionId));
@@ -57,7 +72,7 @@ export function questionRunStatus(stats: AnswerRunStats, questionId: string | un
 
 export function answerRunSummary(stats: AnswerRunStats, total?: number): string {
   const progress = total ? `已处理 ${stats.processed}/${total}，` : "";
-  return `本轮完成：${progress}已答完 ${stats.answered} 题，存疑 ${stats.skipped} 题；请检查后手动提交`;
+  return `本轮完成：${progress}已答完 ${stats.answered} 题，存疑 ${stats.skipped} 题，未找到 ${stats.unanswered ?? 0} 题；请检查后手动提交`;
 }
 
 export function isSystemicAnalysisError(message: string): boolean {

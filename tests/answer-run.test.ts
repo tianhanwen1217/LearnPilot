@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { answerRunSummary, emptyAnswerRunStats, isSystemicAnalysisError, processedQuestionIds, questionRunStatus, recordAnswered, recordSkipped, setCurrentQuestion, shouldResumeAnswerRun } from "../src/shared/answerRun";
+import { answerRunSummary, emptyAnswerRunStats, isSystemicAnalysisError, processedQuestionIds, questionRunStatus, recordAnswered, recordSkipped, recordUnanswered, setCurrentQuestion, shouldResumeAnswerRun } from "../src/shared/answerRun";
 
 describe("fault-tolerant answer run", () => {
   it("resumes a partial run but resets a completed run", () => {
@@ -19,7 +19,7 @@ describe("fault-tolerant answer run", () => {
     let stats = recordSkipped(emptyAnswerRunStats(), "q1", "置信度不足", 1);
     stats = setCurrentQuestion(stats, "q2", 2);
     stats = recordAnswered(stats, "q2", 2);
-    expect(stats).toMatchObject({ processed: 2, answered: 1, skipped: 1 });
+    expect(stats).toMatchObject({ processed: 2, answered: 1, skipped: 1, unanswered: 0 });
     expect(stats.answeredQuestionIds).toEqual(["q2"]);
     expect(stats.answeredQuestionIndexes).toEqual([2]);
     expect(recordAnswered(stats, "q2", 2)).toEqual(stats);
@@ -30,6 +30,15 @@ describe("fault-tolerant answer run", () => {
   it("does not count the same skipped question twice", () => {
     const once = recordSkipped(emptyAnswerRunStats(), "q1", "无法匹配", 1);
     expect(recordSkipped(once, "q1", "再次失败", 1)).toEqual(once);
+  });
+
+  it("tracks unanswered questions separately from selected doubtful answers", () => {
+    let stats = recordSkipped(emptyAnswerRunStats(), "q1", "低置信度但已勾选", 1);
+    stats = recordUnanswered(stats, "q2", "模型没有返回答案", 2);
+    expect(stats).toMatchObject({ processed: 2, skipped: 1, unanswered: 1 });
+    expect(questionRunStatus(stats, "q1", 1, false)).toBe("doubtful");
+    expect(questionRunStatus(stats, "q2", 2, false)).toBe("unanswered");
+    expect(answerRunSummary(stats, 3)).toContain("存疑 1 题，未找到 1 题");
   });
 
   it("only treats service-wide failures as terminal", () => {

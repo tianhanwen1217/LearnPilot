@@ -64,7 +64,7 @@ export function installDemoChrome(): DemoBridge {
           generatedAt: Date.now(),
           extensionVersion: "demo",
           runtime: {
-            automation: { autoAnswer: automation.autoAnswer, paused: automation.paused, answerFrameId: automation.answerFrameId, processed: automation.answerStats?.processed ?? 0, answered: automation.answerStats?.answered ?? 0, skipped: automation.answerStats?.skipped ?? 0, failures: [] },
+            automation: { autoAnswer: automation.autoAnswer, paused: automation.paused, answerFrameId: automation.answerFrameId, processed: automation.answerStats?.processed ?? 0, answered: automation.answerStats?.answered ?? 0, skipped: automation.answerStats?.skipped ?? 0, unanswered: automation.answerStats?.unanswered ?? 0, failures: [] },
             model: { provider: "deepseek", apiMode: "responses", model: "deepseek-v4-flash", searchMode: "responses_web", confidenceThreshold: 60, hasApiKey: false, hasTavilyApiKey: false },
           },
           frames: diagnostics ? [{ frameId: 0, ...diagnostics }] : [],

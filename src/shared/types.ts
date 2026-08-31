@@ -37,11 +37,13 @@ export interface AnswerSkipRecord {
   questionId: string;
   index?: number;
   reason: string;
+  kind?: "doubtful" | "unanswered";
 }
 
 export interface AnswerRunStats {
   answered: number;
   skipped: number;
+  unanswered?: number;
   processed: number;
   answeredQuestionIds: string[];
   answeredQuestionIndexes: number[];

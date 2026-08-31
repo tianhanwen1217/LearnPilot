@@ -1,6 +1,6 @@
 import { normalizeText } from "../shared/text";
 import { effectiveConfidenceThreshold } from "../shared/confidence";
-import { answerRunSummary, emptyAnswerRunStats, isSystemicAnalysisError, processedQuestionIds, recordAnswered, recordSkipped, setCurrentQuestion, shouldResumeAnswerRun } from "../shared/answerRun";
+import { answerRunSummary, emptyAnswerRunStats, isSystemicAnalysisError, processedQuestionIds, recordAnswered, recordSkipped, recordUnanswered, setCurrentQuestion, shouldResumeAnswerRun } from "../shared/answerRun";
 import { getSettings } from "../shared/storage";
 import type { AnalysisResult, AnswerRunStats, DetectedTaskState, MessageResponse, QuestionPageSummary, RuntimeMessage, TabAutomationState, VideoProgress } from "../shared/types";
 import { applySuggestedOptions, clickNextQuestion, extractNextUnprocessedQuestion, focusFirstUnansweredQuestion, inspectQuestionPage } from "./question";
@@ -170,11 +170,15 @@ async function processFrameQuestion(): Promise<void> {
   try {
     const settings = await getSettings();
     const currentIndex = extracted.question.pageIndex ?? inspectQuestionPage()?.currentIndex;
-    const skipAndContinue = async (reason: string) => {
+    const markAndContinue = async (reason: string, kind: "doubtful" | "unanswered") => {
       frameProcessedQuestionIds.add(extracted.question.id);
-      frameAnswerStats = recordSkipped(frameAnswerStats, extracted.question.id, reason, currentIndex);
+      frameAnswerStats = kind === "doubtful"
+        ? recordSkipped(frameAnswerStats, extracted.question.id, reason, currentIndex)
+        : recordUnanswered(frameAnswerStats, extracted.question.id, reason, currentIndex);
       await persistFrameAnswerProgress();
-      reportFrameState("question", `${currentIndex ? `第 ${currentIndex} 题` : "当前题"}标记存疑：${reason}；继续下一题`, true, inspectQuestionPage() ?? undefined, frameAnswerStats);
+      reportFrameState("question", kind === "doubtful"
+        ? `${currentIndex ? `第 ${currentIndex} 题` : "当前题"}已勾选并标记存疑：${reason}；请复核`
+        : `${currentIndex ? `第 ${currentIndex} 题` : "当前题"}未找到答案：${reason}；未勾选`, true, inspectQuestionPage() ?? undefined, frameAnswerStats);
       await new Promise((resolve) => window.setTimeout(resolve, settings.autoNextDelayMs));
       if (!frameAutomation.autoAnswer || frameAutomation.paused) return;
       if (!clickNextQuestion(frameProcessedQuestionIds)) await stopFrameAuto(answerRunSummary(frameAnswerStats, inspectQuestionPage()?.total));
@@ -185,17 +189,19 @@ async function processFrameQuestion(): Promise<void> {
     const response = await chrome.runtime.sendMessage({ type: "ANALYZE_QUESTION", question: extracted.question } satisfies RuntimeMessage) as MessageResponse<AnalysisResult>;
     if (!response.ok || !response.data) {
       const reason = response.error || "题目分析失败";
-      return void await (isSystemicAnalysisError(reason) ? stopFrameAuto(`${reason}；已停止`) : skipAndContinue(reason));
+      return void await (isSystemicAnalysisError(reason) ? stopFrameAuto(`${reason}；已停止`) : markAndContinue(reason, "unanswered"));
     }
     if (frameAutomation.paused || !frameAutomation.autoAnswer) return;
     const confidenceThreshold = effectiveConfidenceThreshold(settings);
-    if (response.data.confidence < confidenceThreshold) return void await skipAndContinue(`置信度 ${response.data.confidence}% 低于阈值 ${confidenceThreshold}%`);
-    if (response.data.warnings.length) return void await skipAndContinue(`模型提示：${response.data.warnings[0]}`);
-    if (!response.data.suggestedOptions.length) return void await skipAndContinue(extracted.question.options.length
+    const reviewReasons: string[] = [];
+    if (response.data.confidence < confidenceThreshold) reviewReasons.push(`置信度 ${response.data.confidence}% 低于阈值 ${confidenceThreshold}%`);
+    if (response.data.warnings.length) reviewReasons.push(`模型提示：${response.data.warnings[0]}`);
+    if (!response.data.suggestedOptions.length) return void await markAndContinue(extracted.question.options.length
       ? "模型没有返回可勾选的选项"
-      : "没有识别到可勾选的选项；当前页面可能是填空/简答题或选项结构尚未适配");
+      : "没有识别到可勾选的选项；当前页面可能是填空/简答题或选项结构尚未适配", "unanswered");
     const applied = await applySuggestedOptions(response.data, extracted.question.id);
-    if (!applied.applied || applied.missing.length) return void await skipAndContinue(`答案为 ${response.data.suggestedOptions.join("、")}，但页面选项匹配失败${applied.missing.length ? `（缺少 ${applied.missing.join("、")}）` : ""}`);
+    if (!applied.applied || applied.missing.length) return void await markAndContinue(`答案为 ${response.data.suggestedOptions.join("、")}，但页面选项匹配失败${applied.missing.length ? `（缺少 ${applied.missing.join("、")}）` : ""}`, applied.applied > 0 ? "doubtful" : "unanswered");
+    if (reviewReasons.length) return void await markAndContinue(reviewReasons.join("；"), "doubtful");
     frameProcessedQuestionIds.add(extracted.question.id);
     frameAnswerStats = recordAnswered(frameAnswerStats, extracted.question.id, currentIndex);
     await persistFrameAnswerProgress();
