@@ -233,10 +233,23 @@ export function uniqueQuestionSequence<T extends { question: ExtractedQuestion }
   return result;
 }
 
+export function limitQuestionSequence<T extends { question: ExtractedQuestion }>(items: T[], authoritativeTotal?: number): T[] {
+  if (!authoritativeTotal || authoritativeTotal < 1) return items;
+  const numbered = items.filter((item) => {
+    const index = item.question.pageIndex;
+    return index != null && index >= 1 && index <= authoritativeTotal;
+  });
+  // A visible answer navigator (1..N) is more reliable than unnumbered nested
+  // wrappers. Keep the real numbered questions and let the summary fill any
+  // temporarily virtualized/missing positions as pending.
+  return numbered.length ? numbered : items.slice(0, authoritativeTotal);
+}
+
 function orderedQuestionDoms(): QuestionDom[] {
-  return uniqueQuestionSequence(candidateContainers()
+  const unique = uniqueQuestionSequence(candidateContainers()
     .map((container) => questionDomFromContainer(container))
     .filter((item): item is QuestionDom => Boolean(item)));
+  return limitQuestionSequence(unique, answerNavigatorTotal());
 }
 
 function questionDomById(questionId: string): QuestionDom | null {

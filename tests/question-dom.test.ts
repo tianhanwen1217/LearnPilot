@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { applySuggestedOptions, clickNextQuestion, extractNextUnprocessedQuestion, uniqueQuestionSequence } from "../src/content/question";
+import { applySuggestedOptions, clickNextQuestion, extractNextUnprocessedQuestion, limitQuestionSequence, uniqueQuestionSequence } from "../src/content/question";
 import type { AnalysisResult } from "../src/shared/types";
 
 const answer: AnalysisResult = {
@@ -88,6 +88,19 @@ describe("strict multi-question DOM queue", () => {
     const unique = uniqueQuestionSequence([unnumberedInnerCopy, ...numbered]);
     expect(unique).toHaveLength(44);
     expect(unique.map((item) => item.question.pageIndex)).toEqual(Array.from({ length: 44 }, (_, offset) => offset + 1));
+  });
+
+  it("uses a 1-to-30 answer navigator to reject twelve unnumbered DOM copies", () => {
+    const base = extractNextUnprocessedQuestion(new Set())!.question;
+    const numbered = Array.from({ length: 30 }, (_, offset) => ({
+      question: { ...base, id: `real-${offset + 1}`, pageIndex: offset + 1 },
+    }));
+    const falseCopies = Array.from({ length: 12 }, (_, offset) => ({
+      question: { ...base, id: `copy-${offset + 1}`, stem: `副本 ${offset + 1}`, pageIndex: undefined },
+    }));
+    const limited = limitQuestionSequence([...numbered, ...falseCopies], 30);
+    expect(limited).toHaveLength(30);
+    expect(limited.map((item) => item.question.pageIndex)).toEqual(Array.from({ length: 30 }, (_, offset) => offset + 1));
   });
 
   it("accepts a stable custom visual state change as a successful selection", async () => {
