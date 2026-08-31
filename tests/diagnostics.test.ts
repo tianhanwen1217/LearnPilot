@@ -6,6 +6,7 @@ import { collectFrameDiagnostics, sanitizeDiagnosticText, sanitizeDiagnosticUrl 
 describe("privacy-safe diagnostics", () => {
   beforeEach(() => {
     document.body.innerHTML = `<main class="course-content">课程章节
+      姓名：测试用户 学号：2400401304
       <input type="password" value="sk-secret-api-key-value-123456789">
       <button data-user="13800138000">直播预览 user@example.com</button>
       <iframe data-src="https://example.com/player?token=secret&courseId=42"></iframe>
@@ -21,6 +22,7 @@ describe("privacy-safe diagnostics", () => {
     expect(url).toContain("token=[%E5%B7%B2%E9%9A%90%E8%97%8F]");
     expect(url).not.toContain("secret");
     expect(url).not.toContain("42");
+    expect(sanitizeDiagnosticUrl("https://example.com/user/2400401304/exam")).not.toContain("2400401304");
   });
 
   it("never exports input values while retaining structural clues", () => {
@@ -29,6 +31,9 @@ describe("privacy-safe diagnostics", () => {
     expect(serialized).not.toContain("secret-api-key");
     expect(serialized).not.toContain("user@example.com");
     expect(serialized).not.toContain("13800138000");
+    expect(serialized).not.toContain("测试用户");
+    expect(serialized).not.toContain("2400401304");
+    expect(report.title).toBe("");
     expect(report.signals).toMatchObject({ live: true, preview: true, course: true });
     expect(report.document.iframeCount).toBe(1);
   });

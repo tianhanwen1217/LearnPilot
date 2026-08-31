@@ -50,7 +50,7 @@ npm run check
 - 填写服务商提供的准确模型 ID 和 API Key。
 - 点击“测试模型连接”。
 
-DeepSeek 预设使用 Responses API、`deepseek-v4-flash` 与官方 `web_search` 工具；点击“测试模型连接”会真正触发一次联网搜索并检查接口返回的搜索调用记录。OpenAI 使用对应的 Responses 网页搜索格式。其他兼容服务如果不支持内置搜索，可切换到 Tavily，或者关闭搜索仅使用模型。DeepSeek 请求格式参照[官方 Responses API 文档](https://api-docs.deepseek.com/api/create-response/)，OpenAI 请求格式参照[官方网页搜索文档](https://developers.openai.com/api/docs/guides/tools-web-search)。
+DeepSeek 预设使用 Responses API、`deepseek-v4-flash` 与官方 `web_search` 工具；启用内置搜索后，每道非题库命中题都会要求接口实际执行搜索。“测试模型连接”也会触发一次联网搜索并检查接口返回的搜索调用记录。OpenAI 使用对应的 Responses 网页搜索格式。其他兼容服务如果不支持内置搜索，可切换到 Tavily，或者关闭搜索仅使用模型。DeepSeek 请求格式参照[官方 Responses API 文档](https://api-docs.deepseek.com/api/create-response/)，OpenAI 请求格式参照[官方网页搜索文档](https://developers.openai.com/api/docs/guides/tools-web-search)。
 
 密钥默认只保存在当前浏览器会话。若选择本机保存，密钥会存入扩展的 `chrome.storage.local`；浏览器扩展无法为它提供硬件级保护。
 
@@ -116,7 +116,7 @@ JSON 可以是数组，也可以是 `{ "questions": [...] }`：
 
 页面结构更新时，主要调整 `src/content/question.ts` 和 `src/content/playback.ts`，模型与界面无需改动。
 
-测试版还可以在侧栏“显示”菜单中点击“导出诊断包”。诊断 JSON 会汇总顶层页面和最近活动 iframe 的任务信号、播放器状态、题目摘要及简化 DOM，不包含输入框内容、Cookie、密码、API Key 或完整查询参数。反馈兼容问题时可附上该文件。
+测试版还可以在侧栏“显示”菜单中点击“导出诊断包”。诊断 JSON 会汇总顶层页面和最近活动 iframe 的任务信号、播放器状态、题目摘要、自动答题失败原因及脱敏后的模型配置；不会导出题干、选项正文、页面标题、输入框内容、Cookie、密码、API Key 或查询参数值。反馈兼容问题时可附上该文件。
 
 ## 隐私与边界
 

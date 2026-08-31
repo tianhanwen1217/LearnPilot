@@ -7,3 +7,5 @@ release/
 picture/
 *.log
 .DS_Store
+/zhenduan/
+LearnPilot-diagnostics-*.json

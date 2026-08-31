@@ -87,7 +87,7 @@ function parseJsonObject(text: string): ModelPayload {
   }
 }
 
-function normalizeModelResult(payload: ModelPayload, sources: SourceLink[], hasBank: boolean): AnalysisResult {
+function normalizeModelResult(payload: ModelPayload, sources: SourceLink[], hasBank: boolean, verifiedWebSearch = false): AnalysisResult {
   const suggestedOptions = Array.isArray(payload.suggested_options)
     ? payload.suggested_options.map(String).map((value) => value.trim().toUpperCase()).filter((value) => /^[A-H]$/.test(value))
     : [];
@@ -96,8 +96,8 @@ function normalizeModelResult(payload: ModelPayload, sources: SourceLink[], hasB
   const webSourceCount = new Set(sources
     .filter((source) => source.kind === "web")
     .map((source) => source.url || source.title)).size;
-  if (!hasBank && webSourceCount === 0) confidence = Math.min(confidence, 62);
-  else if (!hasBank && webSourceCount === 1) confidence = Math.min(confidence, 76);
+  if (!hasBank && !verifiedWebSearch && webSourceCount === 0) confidence = Math.min(confidence, 62);
+  else if (!hasBank && !verifiedWebSearch && webSourceCount === 1) confidence = Math.min(confidence, 76);
   if (Array.isArray(payload.warnings) && payload.warnings.length) confidence = Math.min(confidence, 68);
   const deduplicatedSources = [...new Map(sources.map((source) => [source.url || `${source.kind}:${source.title}`, source])).values()];
   return {
@@ -242,7 +242,7 @@ async function callResponses(
     output.sources.push({ title: provider === "deepseek" ? "DeepSeek 官方联网搜索" : "Responses 内置网页搜索", kind: "web" });
   }
   return {
-    result: normalizeModelResult(parseJsonObject(output.text), [...explicitSources, ...output.sources], Boolean(bankMatch)),
+    result: normalizeModelResult(parseJsonObject(output.text), [...explicitSources, ...output.sources], Boolean(bankMatch), output.usedWebSearch),
     usedWebSearch: output.usedWebSearch,
   };
 }
@@ -284,7 +284,7 @@ export async function analyzeQuestion(
 
   const searchResults = settings.searchMode === "tavily" ? await tavilySearch(question, settings) : [];
   return settings.apiMode === "responses"
-    ? (await callResponses(question, settings, searchResults, match)).result
+    ? (await callResponses(question, settings, searchResults, match, settings.searchMode === "responses_web")).result
     : callChatCompletions(question, settings, searchResults, match);
 }
 

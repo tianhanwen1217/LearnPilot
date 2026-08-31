@@ -27,9 +27,13 @@ export interface FrameDiagnostics {
 }
 
 export interface DiagnosticsPackage {
-  format: "learnpilot-diagnostics-v1";
+  format: "learnpilot-diagnostics-v2";
   generatedAt: number;
   extensionVersion: string;
+  runtime: {
+    automation: { autoAnswer: boolean; paused: boolean; answerFrameId?: number; processed: number; answered: number; skipped: number; failures: Array<{ index?: number; reason: string }> };
+    model: { provider: string; apiMode: string; model: string; searchMode: string; confidenceThreshold: number; hasApiKey: boolean; hasTavilyApiKey: boolean };
+  };
   frames: Array<FrameDiagnostics & { frameId: number }>;
 }
 
@@ -47,6 +51,10 @@ export function sanitizeDiagnosticText(value: string, limit = 140): string {
 export function sanitizeDiagnosticUrl(value: string): string {
   try {
     const url = new URL(value, location.href);
+    url.pathname = url.pathname.split("/").map((segment) => {
+      if (/^\d{4,}$/.test(segment) || /^[A-Za-z0-9_-]{16,}$/.test(segment)) return "[标识已隐藏]";
+      return segment;
+    }).join("/");
     const keys = [...url.searchParams.keys()];
     url.search = keys.length ? `?${[...new Set(keys)].map((key) => `${encodeURIComponent(key)}=[已隐藏]`).join("&")}` : "";
     url.hash = url.hash ? "#[已隐藏]" : "";
@@ -54,6 +62,13 @@ export function sanitizeDiagnosticUrl(value: string): string {
   } catch {
     return "[无效地址]";
   }
+}
+
+function safeActionText(element: HTMLElement): string | undefined {
+  const rawText = (element.innerText || element.getAttribute("title") || "").replace(/\s+/g, " ").trim();
+  if (element.matches(".num_option") && /^[A-H]$/i.test(rawText)) return rawText.toUpperCase();
+  const action = rawText.match(/^(上一题|下一题|开始答题|继续答题|停止答题|暂停答题|提交|保存|关闭|展开|收起|播放|暂停|继续|返回课程|整卷预览)$/)?.[1];
+  return action;
 }
 
 function visible(element: HTMLElement): boolean {
@@ -66,13 +81,14 @@ function describeElement(element: HTMLElement): DiagnosticElement {
   const rect = element.getBoundingClientRect();
   const input = element instanceof HTMLInputElement ? element : undefined;
   const rawUrl = element.getAttribute("href") || element.getAttribute("src") || element.getAttribute("data-src") || "";
+  const safeText = safeActionText(element);
   return {
     tag: element.tagName.toLowerCase(),
     id: element.id ? sanitizeDiagnosticText(element.id, 80) : undefined,
     classes: [...element.classList].slice(0, 10).map((value) => sanitizeDiagnosticText(value, 60)),
     role: element.getAttribute("role") || undefined,
     type: input?.type || element.getAttribute("type") || undefined,
-    text: element.matches("input, textarea, [contenteditable='true']") ? undefined : sanitizeDiagnosticText(element.innerText || element.getAttribute("title") || ""),
+    text: safeText,
     url: rawUrl ? sanitizeDiagnosticUrl(rawUrl) : undefined,
     checked: input && /^(?:radio|checkbox)$/.test(input.type) ? input.checked : undefined,
     disabled: input?.disabled || element.matches(":disabled") || element.getAttribute("aria-disabled") === "true" || undefined,
@@ -107,7 +123,7 @@ export function collectFrameDiagnostics(): FrameDiagnostics {
   return {
     capturedAt: Date.now(),
     url: sanitizeDiagnosticUrl(location.href),
-    title: sanitizeDiagnosticText(document.title, 180),
+    title: document.title ? "[页面标题已隐藏]" : "",
     topFrame: window.top === window,
     viewport: { width: window.innerWidth, height: window.innerHeight },
     document: {

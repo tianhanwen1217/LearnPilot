@@ -592,7 +592,6 @@ export function App() {
     const next = !assistantPausedRef.current;
     assistantPausedRef.current = next;
     setAssistantPaused(next);
-    setBusy(true);
     try {
       const response = await chrome.runtime.sendMessage({ type: "SET_TAB_AUTOMATION", state: { autoAnswer: autoRef.current, paused: next, answerFrameId: answerFrameIdRef.current ?? undefined, answerStats: answerStatsRef.current } } satisfies RuntimeMessage) as MessageResponse<TabAutomationState>;
       if (!response.ok) throw new Error(response.error || "无法切换助手状态");
@@ -601,8 +600,6 @@ export function App() {
       assistantPausedRef.current = !next;
       setAssistantPaused(!next);
       setStatus(error instanceof Error ? error.message : String(error));
-    } finally {
-      setBusy(false);
     }
   };
 
@@ -827,7 +824,10 @@ export function App() {
         const stateLabel = state === "doubtful" ? " · 存疑" : state === "answered" ? " · 已答完" : state === "processing" ? " · 正在处理" : " · 待答";
         return <span key={item.index} className={stateClass} title={`第 ${item.index} 题${stateLabel}`}>{item.index}</span>;
       })}</div></section></div>
-      <button type="button" className={`question-start${autoAnswer ? " running" : ""}`} disabled={busy} onClick={() => void updateAutoAnswer(!autoAnswer)}>{busy ? "正在处理…" : autoAnswer ? "停止答题" : shouldResumeAnswerRun(answerStats, totalQuestions) ? "继续答题" : "开始答题"}</button>
+      <div className="question-actions">
+        <button type="button" className={`question-start${autoAnswer ? " running" : ""}`} disabled={!autoAnswer && busy} onClick={() => void updateAutoAnswer(!autoAnswer)}>{autoAnswer ? "停止答题" : busy ? "正在处理…" : shouldResumeAnswerRun(answerStats, totalQuestions) ? "继续答题" : "开始答题"}</button>
+        {autoAnswer && <button type="button" className={`question-pause${assistantPaused ? " paused" : ""}`} onClick={() => void toggleAssistantPaused()}>{assistantPaused ? "继续答题" : "暂停答题"}</button>}
+      </div>
       {(completedQuestions > 0 || answerStats.processed > 0) && <div className="answer-stats"><span>已处理 {completedQuestions}/{totalQuestions}</span><b>已答完 {answeredQuestions}</b><em>存疑 {doubtfulQuestions}</em></div>}
       <p className={`question-live-status${/失败|错误|未识别|没有|无法|低于|请先|已停止/.test(status) ? " error" : ""}`}>{status}</p>
       {!autoAnswer && answerStats.failures.length > 0 && <details className="answer-report"><summary>查看存疑题目明细</summary><ul>{answerStats.failures.slice(0, 12).map((failure) => <li key={failure.questionId}>{failure.index ? `第 ${failure.index} 题：` : ""}{failure.reason}</li>)}</ul>{answerStats.failures.length > 12 && <small>另有 {answerStats.failures.length - 12} 题标记为存疑</small>}</details>}

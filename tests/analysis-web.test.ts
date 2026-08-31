@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { responsesWebRequestConfig, testConnection } from "../src/background/analysis";
+import { analyzeQuestion, responsesWebRequestConfig, testConnection } from "../src/background/analysis";
 import { DEFAULT_SETTINGS } from "../src/shared/defaults";
 
 afterEach(() => {
@@ -70,5 +70,27 @@ describe("Responses built-in web search", () => {
     }));
 
     await expect(testConnection({ ...DEFAULT_SETTINGS, apiKey: "test-key" })).rejects.toThrow("没有执行联网搜索");
+  });
+
+  it("forces search for real analysis and preserves model confidence when search ran", async () => {
+    let requestBody: Record<string, unknown> = {};
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response(JSON.stringify({
+        status: "completed",
+        output: [
+          { type: "web_search_call", status: "completed", action: { type: "search" } },
+          { type: "message", content: [{ type: "output_text", text: JSON.stringify({ suggested_options: ["A"], answer_text: "A", confidence: 91, explanation: "已检索", warnings: [] }), annotations: [] }] },
+        ],
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }));
+
+    const result = await analyzeQuestion({
+      id: "q1", type: "single", stem: "测试题", options: [{ key: "A", text: "答案" }], pageUrl: "https://example.com", courseId: "test",
+    }, { ...DEFAULT_SETTINGS, apiKey: "test-key" });
+
+    expect(requestBody.tool_choice).toEqual({ type: "web_search" });
+    expect(result.confidence).toBe(91);
+    expect(result.sources).toContainEqual({ title: "DeepSeek 官方联网搜索", kind: "web" });
   });
 });

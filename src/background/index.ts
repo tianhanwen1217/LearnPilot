@@ -1,4 +1,5 @@
 import { analyzeQuestion, testConnection } from "./analysis";
+import { detectApiProvider } from "../shared/providers";
 import { clearAllExtensionData, getSettings, saveSettings } from "../shared/storage";
 import { courseSessionKey, tabAutomationKey, tabPlaybackKey } from "../shared/defaults";
 import type { MessageResponse, RuntimeMessage, TabAutomationState } from "../shared/types";
@@ -6,6 +7,16 @@ import type { DiagnosticsPackage, FrameDiagnostics } from "../content/diagnostic
 
 const lastAdvanceAt = new Map<number, number>();
 const diagnosticFrames = new Map<number, Map<number, FrameDiagnostics>>();
+
+function sanitizeDiagnosticReason(value: string): string {
+  return value
+    .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, "[邮箱已隐藏]")
+    .replace(/(?<!\d)1[3-9]\d{9}(?!\d)/g, "[手机号已隐藏]")
+    .replace(/\b(?:sk|Bearer)[-_\s]?[A-Za-z0-9._-]{12,}\b/gi, "[密钥已隐藏]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 240);
+}
 
 async function getTabAutomation(tabId: number): Promise<TabAutomationState> {
   const key = tabAutomationKey(tabId);
@@ -154,10 +165,32 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
             .filter(([, report]) => report.capturedAt >= recentAfter)
             .map(([frameId, report]) => ({ frameId, ...report }))
             .sort((a, b) => a.frameId - b.frameId);
+          const [automation, settings] = await Promise.all([getTabAutomation(tabId), getSettings()]);
+          const stats = automation.answerStats;
           const data: DiagnosticsPackage = {
-            format: "learnpilot-diagnostics-v1",
+            format: "learnpilot-diagnostics-v2",
             generatedAt: Date.now(),
             extensionVersion: chrome.runtime.getManifest().version,
+            runtime: {
+              automation: {
+                autoAnswer: automation.autoAnswer,
+                paused: automation.paused,
+                answerFrameId: automation.answerFrameId,
+                processed: stats?.processed ?? 0,
+                answered: stats?.answered ?? 0,
+                skipped: stats?.skipped ?? 0,
+                failures: (stats?.failures ?? []).slice(-30).map((failure) => ({ index: failure.index, reason: sanitizeDiagnosticReason(failure.reason) })),
+              },
+              model: {
+                provider: detectApiProvider(settings),
+                apiMode: settings.apiMode,
+                model: settings.model,
+                searchMode: settings.searchMode,
+                confidenceThreshold: settings.confidenceThreshold,
+                hasApiKey: Boolean(settings.apiKey),
+                hasTavilyApiKey: Boolean(settings.tavilyApiKey),
+              },
+            },
             frames,
           };
           sendResponse({ ok: true, data });
