@@ -149,17 +149,16 @@ async function processFrameQuestion(): Promise<void> {
   frameQuestionBusy = true;
   try {
     const settings = await getSettings();
+    const currentIndex = inspectQuestionPage()?.currentIndex;
     const skipAndContinue = async (reason: string) => {
       frameProcessedQuestionIds.add(extracted.question.id);
-      const index = inspectQuestionPage()?.currentIndex;
-      frameAnswerStats = recordSkipped(frameAnswerStats, extracted.question.id, reason, index);
-      reportFrameState("question", `${index ? `第 ${index} 题` : "当前题"}标记存疑：${reason}；继续下一题`, true, inspectQuestionPage() ?? undefined, frameAnswerStats);
+      frameAnswerStats = recordSkipped(frameAnswerStats, extracted.question.id, reason, currentIndex);
+      reportFrameState("question", `${currentIndex ? `第 ${currentIndex} 题` : "当前题"}标记存疑：${reason}；继续下一题`, true, inspectQuestionPage() ?? undefined, frameAnswerStats);
       await new Promise((resolve) => window.setTimeout(resolve, settings.autoNextDelayMs));
       if (!frameAutomation.autoAnswer || frameAutomation.paused) return;
       if (!clickNextQuestion(frameProcessedQuestionIds)) await stopFrameAuto(answerRunSummary(frameAnswerStats, inspectQuestionPage()?.total));
     };
 
-    const currentIndex = inspectQuestionPage()?.currentIndex;
     frameAnswerStats = setCurrentQuestion(frameAnswerStats, extracted.question.id, currentIndex);
     reportFrameState("question", "正在分析当前题目…", true, inspectQuestionPage() ?? undefined, frameAnswerStats);
     const response = await chrome.runtime.sendMessage({ type: "ANALYZE_QUESTION", question: extracted.question } satisfies RuntimeMessage) as MessageResponse<AnalysisResult>;

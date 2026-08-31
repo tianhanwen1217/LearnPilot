@@ -22,6 +22,11 @@ const OPTION_SELECTORS = [
   ".Zy_ulTop li", "[class*='option-item']", "[class*='answerItem']", "[class*='radio-wrapper']",
   "[class*='checkbox-wrapper']", ".el-radio", ".el-checkbox", "label",
 ];
+const RELIABLE_STEM_SELECTORS = [
+  ".Zy_TItle", ".question-stem", ".mark_name", ".stem", ".subject",
+  "[class*='stem']", "[class*='question-title']", "[class*='questionTitle']",
+];
+const ANSWER_SURFACE_SELECTOR = "input, textarea, [contenteditable='true'], .answerBg, .answerList, .answer-list, .stem_answer, .Zy_ulTop";
 let preferredQuestionId: string | null = null;
 
 function isVisible(element: Element): element is HTMLElement {
@@ -52,6 +57,20 @@ function questionIndexFromContainer(container: HTMLElement): number | undefined 
   return parseQuestionIndex(container.innerText);
 }
 
+function inferredQuestionContainers(): HTMLElement[] {
+  return uniqueElements(RELIABLE_STEM_SELECTORS).slice(0, 160).flatMap((anchor) => {
+    let current: HTMLElement | null = anchor;
+    let numberedFallback: HTMLElement | null = null;
+    for (let depth = 0; current && depth < 7; depth += 1, current = current.parentElement) {
+      if (questionIndexFromContainer(current)) {
+        numberedFallback = current;
+        if (current.querySelector(ANSWER_SURFACE_SELECTOR)) return [current];
+      }
+    }
+    return numberedFallback ? [numberedFallback] : [];
+  });
+}
+
 function stripOptionPrefix(value: string): string {
   return cleanVisibleText(value).replace(/^\s*[A-H][.、．:：)）]\s*/i, "");
 }
@@ -74,7 +93,8 @@ function optionKey(element: HTMLElement, index: number): string {
 }
 
 function candidateContainers(): HTMLElement[] {
-  const candidates = uniqueElements(CONTAINER_SELECTORS);
+  const candidates = [...new Set([...uniqueElements(CONTAINER_SELECTORS), ...inferredQuestionContainers()])]
+    .sort((a, b) => a === b ? 0 : a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1);
   if (candidates.length) {
     const leafCandidates = candidates.filter((element) => !candidates.some((other) => other !== element && element.contains(other) && other.innerText.length > 20));
     return leafCandidates
@@ -203,7 +223,6 @@ export function inspectQuestionPage(): QuestionPageSummary | null {
 
 export function focusFirstUnansweredQuestion(excludedQuestionIds: ReadonlySet<string> = new Set()): boolean {
   const target = candidateContainers().find((container) => {
-    if (containerAnswered(container)) return false;
     const questionId = questionDomFromContainer(container)?.question.id;
     return !questionId || !excludedQuestionIds.has(questionId);
   });
@@ -305,7 +324,6 @@ export function clickNextQuestion(excludedQuestionIds: ReadonlySet<string> = new
     ? [...containers.slice(currentIndex + 1), ...containers.slice(0, currentIndex)]
     : containers;
   const next = ordered.find((container) => {
-    if (containerAnswered(container)) return false;
     const questionId = questionDomFromContainer(container)?.question.id;
     return !questionId || !excludedQuestionIds.has(questionId);
   });

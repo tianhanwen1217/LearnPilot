@@ -734,7 +734,7 @@ export function App() {
   const answeredQuestionIds = new Set(answerStats.answeredQuestionIds);
   const answeredQuestionIndexes = new Set(answerStats.answeredQuestionIndexes ?? []);
   const totalQuestions = questionSummary?.total ?? 1;
-  const answeredQuestions = questionItems.filter((item) => !skippedQuestionIndexes.has(item.index) && (item.answered || answeredQuestionIndexes.has(item.index) || Boolean(item.id && answeredQuestionIds.has(item.id)))).length;
+  const answeredQuestions = questionItems.filter((item) => !skippedQuestionIndexes.has(item.index) && (answeredQuestionIndexes.has(item.index) || Boolean(item.id && answeredQuestionIds.has(item.id)))).length;
   const doubtfulQuestions = questionItems.filter((item) => skippedQuestionIndexes.has(item.index) || Boolean(item.id && skippedQuestionIds.has(item.id))).length;
   const pendingQuestions = Math.max(0, totalQuestions - answeredQuestions - doubtfulQuestions);
   const completedQuestions = Math.min(totalQuestions, answeredQuestions + doubtfulQuestions);
