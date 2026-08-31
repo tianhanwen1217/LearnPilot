@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { answerRunSummary, emptyAnswerRunStats, isSystemicAnalysisError, questionRunStatus, recordAnswered, recordSkipped, setCurrentQuestion, shouldResumeAnswerRun } from "../shared/answerRun";
+import { answerRunSummary, emptyAnswerRunStats, isSystemicAnalysisError, processedQuestionIds, questionRunStatus, recordAnswered, recordSkipped, setCurrentQuestion, shouldResumeAnswerRun } from "../shared/answerRun";
 import { courseSessionKey } from "../shared/defaults";
 import { effectiveConfidenceThreshold } from "../shared/confidence";
 import { applyProviderPreset, detectApiProvider } from "../shared/providers";
@@ -139,13 +139,17 @@ export function App() {
     setAutoAnswer(false);
     const current = await loadCourseState(courseId);
     await saveCourseState({ ...current, autoRunning: false });
-    await chrome.runtime.sendMessage({ type: "SET_TAB_AUTOMATION", state: { autoAnswer: false, paused: assistantPausedRef.current, answerFrameId: answerFrameIdRef.current ?? undefined } } satisfies RuntimeMessage).catch(() => undefined);
+    await chrome.runtime.sendMessage({ type: "SET_TAB_AUTOMATION", state: { autoAnswer: false, paused: assistantPausedRef.current, answerFrameId: answerFrameIdRef.current ?? undefined, answerStats: answerStatsRef.current } } satisfies RuntimeMessage).catch(() => undefined);
     setStatus(message);
   }, [courseId]);
 
   const updateAnswerStats = useCallback((stats: AnswerRunStats) => {
     answerStatsRef.current = stats;
     setAnswerStats(stats);
+  }, []);
+
+  const persistAnswerStats = useCallback(async (stats: AnswerRunStats) => {
+    await chrome.runtime.sendMessage({ type: "SAVE_ANSWER_PROGRESS", answerStats: stats } satisfies RuntimeMessage).catch(() => undefined);
   }, []);
 
   const analyzeCurrentQuestion = useCallback(async (lockedQuestion?: ExtractedQuestion): Promise<{ question: ExtractedQuestion; result: AnalysisResult } | { error: string }> => {
@@ -196,6 +200,7 @@ export function App() {
         const index = question.pageIndex ?? inspectQuestionPage()?.currentIndex;
         const stats = recordSkipped(answerStatsRef.current, question.id, reason, index);
         updateAnswerStats(stats);
+        await persistAnswerStats(stats);
         setStatus(`${index ? `第 ${index} 题` : "当前题"}标记存疑：${reason}；继续下一题`);
         return advanceOrFinish(question, settings);
       };
@@ -260,7 +265,9 @@ export function App() {
           continue;
         }
         processedQuestionIdsRef.current.add(analyzed.question.id);
-        updateAnswerStats(recordAnswered(answerStatsRef.current, analyzed.question.id, currentIndex));
+        const stats = recordAnswered(answerStatsRef.current, analyzed.question.id, currentIndex);
+        updateAnswerStats(stats);
+        await persistAnswerStats(stats);
         setStatus(`已勾选 ${analyzed.result.suggestedOptions.join("、")}；已答完 ${answerStatsRef.current.answered}，存疑 ${answerStatsRef.current.skipped}`);
         if (!await advanceOrFinish(analyzed.question, settings)) return;
       }
@@ -271,7 +278,7 @@ export function App() {
     } finally {
       autoLoopRef.current = false;
     }
-  }, [analyzeCurrentQuestion, stopAuto, updateAnswerStats]);
+  }, [analyzeCurrentQuestion, persistAnswerStats, stopAuto, updateAnswerStats]);
 
   const setAutoAssist = useCallback(async (enabled: boolean) => {
     if (!enabled) {
@@ -292,7 +299,7 @@ export function App() {
     setAutoAnswer(true);
     const current = await loadCourseState(courseId);
     await saveCourseState({ ...current, testMode: true, autoRunning: true });
-    await chrome.runtime.sendMessage({ type: "SET_TAB_AUTOMATION", state: { autoAnswer: true, paused: assistantPausedRef.current, answerFrameId: recentQuestionFrame } } satisfies RuntimeMessage);
+    await chrome.runtime.sendMessage({ type: "SET_TAB_AUTOMATION", state: { autoAnswer: true, paused: assistantPausedRef.current, answerFrameId: recentQuestionFrame, answerStats: answerStatsRef.current } } satisfies RuntimeMessage);
     setStatus(resuming ? `继续自动答题，已处理 ${answerStatsRef.current.processed}/${detectedTotal ?? "?"}` : "自动答题已开启");
   }, [courseId, stopAuto, updateAnswerStats]);
 
@@ -308,6 +315,10 @@ export function App() {
       setJumpMode(mode);
       setPlaybackRateState(settings.playbackRate);
       const automation = automationResponse.ok && automationResponse.data ? automationResponse.data : { autoAnswer: state.testMode && state.autoRunning, paused: false };
+      if (automation.answerStats) {
+        updateAnswerStats(automation.answerStats);
+        processedQuestionIdsRef.current = processedQuestionIds(automation.answerStats);
+      }
       answerFrameIdRef.current = automation.answerFrameId ?? null;
       const enabled = automation.autoAnswer;
       autoRef.current = enabled;
@@ -331,6 +342,10 @@ export function App() {
         setAutoAnswer(message.state.autoAnswer);
         assistantPausedRef.current = message.state.paused;
         setAssistantPaused(message.state.paused);
+        if (message.state.answerStats && message.state.answerStats.processed >= answerStatsRef.current.processed) {
+          updateAnswerStats(message.state.answerStats);
+          processedQuestionIdsRef.current = processedQuestionIds(message.state.answerStats);
+        }
         setStatus(message.state.paused ? "助手已暂停" : "助手已继续，正在识别课程内容…");
       }
       if (message.type === "PAGE_TASK_STATE") {
@@ -578,7 +593,7 @@ export function App() {
     setAssistantPaused(next);
     setBusy(true);
     try {
-      const response = await chrome.runtime.sendMessage({ type: "SET_TAB_AUTOMATION", state: { autoAnswer: autoRef.current, paused: next, answerFrameId: answerFrameIdRef.current ?? undefined } } satisfies RuntimeMessage) as MessageResponse<TabAutomationState>;
+      const response = await chrome.runtime.sendMessage({ type: "SET_TAB_AUTOMATION", state: { autoAnswer: autoRef.current, paused: next, answerFrameId: answerFrameIdRef.current ?? undefined, answerStats: answerStatsRef.current } } satisfies RuntimeMessage) as MessageResponse<TabAutomationState>;
       if (!response.ok) throw new Error(response.error || "无法切换助手状态");
       setStatus(next ? "助手已暂停" : "助手已继续，正在识别课程内容…");
     } catch (error) {

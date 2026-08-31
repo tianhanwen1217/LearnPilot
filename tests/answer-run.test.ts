@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { answerRunSummary, emptyAnswerRunStats, isSystemicAnalysisError, questionRunStatus, recordAnswered, recordSkipped, setCurrentQuestion, shouldResumeAnswerRun } from "../src/shared/answerRun";
+import { answerRunSummary, emptyAnswerRunStats, isSystemicAnalysisError, processedQuestionIds, questionRunStatus, recordAnswered, recordSkipped, setCurrentQuestion, shouldResumeAnswerRun } from "../src/shared/answerRun";
 
 describe("fault-tolerant answer run", () => {
   it("resumes a partial run but resets a completed run", () => {
@@ -7,6 +7,12 @@ describe("fault-tolerant answer run", () => {
     expect(shouldResumeAnswerRun(partial, 3)).toBe(true);
     expect(shouldResumeAnswerRun(partial, 1)).toBe(false);
     expect(shouldResumeAnswerRun(emptyAnswerRunStats(), 3)).toBe(false);
+  });
+
+  it("rebuilds processed ids after a paged frame reload", () => {
+    let stats = recordAnswered(emptyAnswerRunStats(), "q1", 1);
+    stats = recordSkipped(stats, "q2", "低置信度", 2);
+    expect([...processedQuestionIds(stats)]).toEqual(["q1", "q2"]);
   });
 
   it("records per-question failures without ending the run", () => {

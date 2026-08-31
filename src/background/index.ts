@@ -124,6 +124,17 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
           sendResponse({ ok: true, data: message.state });
           return;
         }
+        case "SAVE_ANSWER_PROGRESS": {
+          const tabId = sender.tab?.id;
+          if (tabId == null) throw new Error("无法识别当前标签页。");
+          const automation = await getTabAutomation(tabId);
+          const stored = automation.answerStats;
+          if (!stored || message.answerStats.processed >= stored.processed) {
+            await setTabAutomation(tabId, { ...automation, answerStats: message.answerStats });
+          }
+          sendResponse({ ok: true });
+          return;
+        }
         case "FRAME_TASK_STATE": {
           const tabId = sender.tab?.id;
           if (tabId != null) {

@@ -10,6 +10,10 @@ export function shouldResumeAnswerRun(stats: AnswerRunStats, total?: number): bo
   return stats.processed > 0 && (!total || stats.processed < total);
 }
 
+export function processedQuestionIds(stats: AnswerRunStats): Set<string> {
+  return new Set([...stats.answeredQuestionIds, ...stats.failures.map((failure) => failure.questionId)]);
+}
+
 export function setCurrentQuestion(stats: AnswerRunStats, questionId: string, index?: number): AnswerRunStats {
   return { ...stats, currentQuestionId: questionId, currentQuestionIndex: index };
 }

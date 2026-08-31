@@ -1,6 +1,6 @@
 import { normalizeText } from "../shared/text";
 import { effectiveConfidenceThreshold } from "../shared/confidence";
-import { answerRunSummary, emptyAnswerRunStats, isSystemicAnalysisError, recordAnswered, recordSkipped, setCurrentQuestion, shouldResumeAnswerRun } from "../shared/answerRun";
+import { answerRunSummary, emptyAnswerRunStats, isSystemicAnalysisError, processedQuestionIds, recordAnswered, recordSkipped, setCurrentQuestion, shouldResumeAnswerRun } from "../shared/answerRun";
 import { getSettings } from "../shared/storage";
 import type { AnalysisResult, AnswerRunStats, DetectedTaskState, MessageResponse, QuestionPageSummary, RuntimeMessage, TabAutomationState, VideoProgress } from "../shared/types";
 import { applySuggestedOptions, clickNextQuestion, extractNextUnprocessedQuestion, focusFirstUnansweredQuestion, inspectQuestionPage } from "./question";
@@ -89,6 +89,16 @@ let lastFrameSyncAt = 0;
 let frameAnswerStats = emptyAnswerRunStats();
 let frameProcessedQuestionIds = new Set<string>();
 
+function hydrateFrameAnswerProgress(stats?: AnswerRunStats): void {
+  if (!stats || stats.processed < frameAnswerStats.processed) return;
+  frameAnswerStats = stats;
+  frameProcessedQuestionIds = processedQuestionIds(stats);
+}
+
+async function persistFrameAnswerProgress(): Promise<void> {
+  await chrome.runtime.sendMessage({ type: "SAVE_ANSWER_PROGRESS", answerStats: frameAnswerStats } satisfies RuntimeMessage).catch(() => undefined);
+}
+
 function prepareFrameAnswerRunForStart(): void {
   const total = inspectQuestionPage()?.total;
   if (!shouldResumeAnswerRun(frameAnswerStats, total)) {
@@ -118,6 +128,7 @@ async function syncFrameControls(): Promise<void> {
   ]);
   if (playback?.ok && typeof playback.data === "boolean") framePlaybackEnabled = playback.data;
   if (automation?.ok && automation.data) {
+    hydrateFrameAnswerProgress(automation.data.answerStats);
     const scopedAutomation = adoptFrameAutomation(automation.data);
     if (!frameAutomation.autoAnswer && scopedAutomation.autoAnswer) {
       prepareFrameAnswerRunForStart();
@@ -160,6 +171,7 @@ async function processFrameQuestion(): Promise<void> {
     const skipAndContinue = async (reason: string) => {
       frameProcessedQuestionIds.add(extracted.question.id);
       frameAnswerStats = recordSkipped(frameAnswerStats, extracted.question.id, reason, currentIndex);
+      await persistFrameAnswerProgress();
       reportFrameState("question", `${currentIndex ? `第 ${currentIndex} 题` : "当前题"}标记存疑：${reason}；继续下一题`, true, inspectQuestionPage() ?? undefined, frameAnswerStats);
       await new Promise((resolve) => window.setTimeout(resolve, settings.autoNextDelayMs));
       if (!frameAutomation.autoAnswer || frameAutomation.paused) return;
@@ -184,6 +196,7 @@ async function processFrameQuestion(): Promise<void> {
     if (!applied.applied || applied.missing.length) return void await skipAndContinue(`答案为 ${response.data.suggestedOptions.join("、")}，但页面选项匹配失败${applied.missing.length ? `（缺少 ${applied.missing.join("、")}）` : ""}`);
     frameProcessedQuestionIds.add(extracted.question.id);
     frameAnswerStats = recordAnswered(frameAnswerStats, extracted.question.id, currentIndex);
+    await persistFrameAnswerProgress();
     reportFrameState("question", `已勾选 ${response.data.suggestedOptions.join("、")}；已答完 ${frameAnswerStats.answered}，存疑 ${frameAnswerStats.skipped}`, true, inspectQuestionPage() ?? undefined, frameAnswerStats);
     await new Promise((resolve) => window.setTimeout(resolve, settings.autoNextDelayMs));
     if (frameAutomation.paused || !frameAutomation.autoAnswer) return;
@@ -251,6 +264,7 @@ async function safelyInspectFrameTask(): Promise<void> {
 
 export function startFrameTaskMonitor(playbackEnabled: boolean, automation: TabAutomationState): void {
   framePlaybackEnabled = playbackEnabled;
+  hydrateFrameAnswerProgress(automation.answerStats);
   frameAutomation = adoptFrameAutomation(automation);
   if (frameMonitorTimer != null) return;
   void safelyInspectFrameTask();
@@ -262,6 +276,7 @@ export function setFramePlaybackState(enabled: boolean): void {
 }
 
 export function setFrameAutomationState(state: TabAutomationState): void {
+  hydrateFrameAnswerProgress(state.answerStats);
   const scopedAutomation = adoptFrameAutomation(state);
   if (!frameAutomation.autoAnswer && scopedAutomation.autoAnswer) {
     prepareFrameAnswerRunForStart();
