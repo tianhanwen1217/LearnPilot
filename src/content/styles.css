@@ -79,6 +79,9 @@ button:disabled, select:disabled { cursor: default; opacity: .55; }
 }
 .display-menu label { display: block; }
 .display-menu label + label { margin-top: 10px; }
+.diagnostics-export { width: 100%; margin-top: 12px; border-color: #d9cbb9; color: #5f6670; background: #faf7f2; }
+.diagnostics-export:hover { background: #f3ede4; }
+.diagnostics-note { display: block; margin-top: 6px; color: var(--lp-muted); font-size: 8px; line-height: 1.4; text-align: center; }
 .display-menu span { display: flex; justify-content: space-between; color: #62666a; font-size: 10px; }
 .display-menu b { color: #3e4347; font-weight: 650; }
 .display-menu input { width: 100%; margin: 7px 0 0; accent-color: #667fa8; cursor: pointer; }

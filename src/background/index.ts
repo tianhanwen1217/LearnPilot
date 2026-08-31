@@ -2,8 +2,10 @@ import { analyzeQuestion, testConnection } from "./analysis";
 import { clearAllExtensionData, getSettings, saveSettings } from "../shared/storage";
 import { courseSessionKey, tabAutomationKey, tabPlaybackKey } from "../shared/defaults";
 import type { MessageResponse, RuntimeMessage, TabAutomationState } from "../shared/types";
+import type { DiagnosticsPackage, FrameDiagnostics } from "../content/diagnostics";
 
 const lastAdvanceAt = new Map<number, number>();
+const diagnosticFrames = new Map<number, Map<number, FrameDiagnostics>>();
 
 async function getTabAutomation(tabId: number): Promise<TabAutomationState> {
   const key = tabAutomationKey(tabId);
@@ -135,6 +137,32 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
           sendResponse({ ok: true });
           return;
         }
+        case "FRAME_DIAGNOSTICS": {
+          const tabId = sender.tab?.id;
+          if (tabId == null) throw new Error("无法识别当前标签页。");
+          const frames = diagnosticFrames.get(tabId) ?? new Map<number, FrameDiagnostics>();
+          frames.set(sender.frameId ?? 0, message.report);
+          diagnosticFrames.set(tabId, frames);
+          sendResponse({ ok: true });
+          return;
+        }
+        case "EXPORT_DIAGNOSTICS": {
+          const tabId = sender.tab?.id;
+          if (tabId == null) throw new Error("无法识别当前标签页。");
+          const recentAfter = Date.now() - 30000;
+          const frames = [...(diagnosticFrames.get(tabId)?.entries() ?? [])]
+            .filter(([, report]) => report.capturedAt >= recentAfter)
+            .map(([frameId, report]) => ({ frameId, ...report }))
+            .sort((a, b) => a.frameId - b.frameId);
+          const data: DiagnosticsPackage = {
+            format: "learnpilot-diagnostics-v1",
+            generatedAt: Date.now(),
+            extensionVersion: chrome.runtime.getManifest().version,
+            frames,
+          };
+          sendResponse({ ok: true, data });
+          return;
+        }
         case "FRAME_TASK_STATE": {
           const tabId = sender.tab?.id;
           if (tabId != null) {
@@ -178,5 +206,6 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   lastAdvanceAt.delete(tabId);
+  diagnosticFrames.delete(tabId);
   chrome.storage.session.remove([tabPlaybackKey(tabId), tabAutomationKey(tabId)]).catch(() => undefined);
 });

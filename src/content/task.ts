@@ -4,6 +4,7 @@ import { answerRunSummary, emptyAnswerRunStats, isSystemicAnalysisError, process
 import { getSettings } from "../shared/storage";
 import type { AnalysisResult, AnswerRunStats, DetectedTaskState, MessageResponse, QuestionPageSummary, RuntimeMessage, TabAutomationState, VideoProgress } from "../shared/types";
 import { applySuggestedOptions, clickNextQuestion, extractNextUnprocessedQuestion, focusFirstUnansweredQuestion, inspectQuestionPage } from "./question";
+import { collectFrameDiagnostics } from "./diagnostics";
 
 export type PageTaskKind = DetectedTaskState;
 
@@ -86,6 +87,7 @@ let lastFrameState = "";
 let lastFrameReportAt = 0;
 let lastFrameTextScrollAt = 0;
 let lastFrameSyncAt = 0;
+let lastFrameDiagnosticsAt = 0;
 let frameAnswerStats = emptyAnswerRunStats();
 let frameProcessedQuestionIds = new Set<string>();
 
@@ -218,6 +220,10 @@ function localVideoProgress(): Pick<VideoProgress, "paused" | "currentTime" | "d
 
 async function inspectFrameTask(): Promise<void> {
   await syncFrameControls();
+  if (Date.now() - lastFrameDiagnosticsAt > 5000) {
+    lastFrameDiagnosticsAt = Date.now();
+    chrome.runtime.sendMessage({ type: "FRAME_DIAGNOSTICS", report: collectFrameDiagnostics() } satisfies RuntimeMessage).catch(() => undefined);
+  }
   if (frameAutomation.paused) return;
   const coursePage = isLikelyCoursePage() || window.top !== window;
   const questionSummary = inspectQuestionPage();

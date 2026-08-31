@@ -1,4 +1,5 @@
 import type { AnalysisResult, DetectedTaskState, ExtractedQuestion, RuntimeMessage, TabAutomationState } from "../shared/types";
+import type { DiagnosticsPackage, FrameDiagnostics } from "../content/diagnostics";
 
 type RuntimeListener = (message: RuntimeMessage, sender: chrome.runtime.MessageSender, sendResponse: (response: unknown) => void) => boolean | void;
 
@@ -33,6 +34,7 @@ export function installDemoChrome(): DemoBridge {
   const session = new Map<string, unknown>();
   let playback = false;
   let automation: TabAutomationState = { autoAnswer: false, paused: false };
+  let diagnostics: FrameDiagnostics | undefined;
 
   const emit = (message: RuntimeMessage) => {
     for (const listener of listeners) listener(message, { frameId: 0 } as chrome.runtime.MessageSender, () => undefined);
@@ -55,6 +57,16 @@ export function installDemoChrome(): DemoBridge {
       case "GET_TAB_AUTOMATION": return { ok: true, data: automation };
       case "SET_TAB_AUTOMATION": automation = message.state; emit({ type: "AUTOMATION_STATE_CHANGED", state: automation }); return { ok: true, data: automation };
       case "ANALYZE_QUESTION": return { ok: true, data: answerFor(message.question) };
+      case "FRAME_DIAGNOSTICS": diagnostics = message.report; return { ok: true };
+      case "EXPORT_DIAGNOSTICS": {
+        const data: DiagnosticsPackage = {
+          format: "learnpilot-diagnostics-v1",
+          generatedAt: Date.now(),
+          extensionVersion: "demo",
+          frames: diagnostics ? [{ frameId: 0, ...diagnostics }] : [],
+        };
+        return { ok: true, data };
+      }
       case "GET_PAGE_ASSIST_STATUS": return { ok: true, data: { testMode: automation.autoAnswer, autoRunning: automation.autoAnswer, paused: automation.paused } };
       default: return { ok: true };
     }
@@ -65,6 +77,7 @@ export function installDemoChrome(): DemoBridge {
     value: {
       runtime: {
         id: "learnpilot-demo",
+        getManifest: () => ({ version: "demo" }),
         getURL: (path: string) => new URL(path, location.href).href,
         openOptionsPage: () => window.alert("演示页不打开真实 API 设置；扩展中此按钮会正常打开设置页。"),
         sendMessage,

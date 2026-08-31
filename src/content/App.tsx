@@ -10,6 +10,7 @@ import { advanceToNextLesson, initializePlaybackFrame } from "./playback";
 import { clampLauncherPosition, launcherMovementExceeded, snapLauncherPosition, type LauncherPoint } from "./launcher";
 import { clampPanelOpacity, clampPanelPosition, clampPanelScale, shouldCollapsePanel } from "./panel";
 import { isLikelyCoursePage, pageHasBlockingPrompt, pageHasTextTask, pageShowsTaskCompleted, selectPageTask, type PageTaskKind } from "./task";
+import { collectFrameDiagnostics, type DiagnosticsPackage } from "./diagnostics";
 
 const LAUNCHER_POSITION_KEY = "learnpilot.launcherPosition";
 const PANEL_DISPLAY_KEY = "learnpilot.panelDisplay";
@@ -619,6 +620,30 @@ export function App() {
     window.requestAnimationFrame(() => savePanelDisplay());
   };
 
+  const exportDiagnostics = async () => {
+    setBusy(true);
+    setStatus("正在收集页面诊断信息…");
+    try {
+      await chrome.runtime.sendMessage({ type: "FRAME_DIAGNOSTICS", report: collectFrameDiagnostics() } satisfies RuntimeMessage);
+      await new Promise((resolve) => window.setTimeout(resolve, 180));
+      const response = await chrome.runtime.sendMessage({ type: "EXPORT_DIAGNOSTICS" } satisfies RuntimeMessage) as MessageResponse<DiagnosticsPackage>;
+      if (!response.ok || !response.data) throw new Error(response.error || "诊断信息收集失败");
+      const blob = new Blob([JSON.stringify(response.data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `LearnPilot-diagnostics-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setStatus(`诊断包已导出 · ${response.data.frames.length} 个页面框架`);
+      setDisplayMenuOpen(false);
+    } catch (error) {
+      setStatus(`诊断包导出失败：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const toggleApiMenu = async () => {
     if (apiMenuOpen) {
       setApiMenuOpen(false);
@@ -783,6 +808,8 @@ export function App() {
       {displayMenuOpen && <div className="display-menu" onPointerDown={(event) => event.stopPropagation()}>
         <label><span>透明度 <b>{Math.round(panelOpacity * 100)}%</b></span><input type="range" min="45" max="100" step="5" value={Math.round(panelOpacity * 100)} onChange={(event) => updatePanelOpacity(Number(event.target.value) / 100)} /></label>
         <label><span>缩放 <b>{Math.round(panelScale * 100)}%</b></span><input type="range" min="75" max="125" step="5" value={Math.round(panelScale * 100)} onChange={(event) => updatePanelScale(Number(event.target.value) / 100)} /></label>
+        <button type="button" className="diagnostics-export" disabled={busy} onClick={() => void exportDiagnostics()}>导出诊断包</button>
+        <small className="diagnostics-note">不包含输入内容、Cookie、密码或 API Key</small>
       </div>}
       {apiMenuOpen && <form className="api-menu" onSubmit={(event) => void saveAndTestDeepSeek(event)} onPointerDown={(event) => event.stopPropagation()}>
         <label htmlFor="learnpilot-deepseek-key">DeepSeek API Key</label>

@@ -151,6 +151,8 @@ export type RuntimeMessage =
   | { type: "GET_TAB_AUTOMATION" }
   | { type: "SET_TAB_AUTOMATION"; state: TabAutomationState }
   | { type: "SAVE_ANSWER_PROGRESS"; answerStats: AnswerRunStats }
+  | { type: "FRAME_DIAGNOSTICS"; report: import("../content/diagnostics").FrameDiagnostics }
+  | { type: "EXPORT_DIAGNOSTICS" }
   | { type: "AUTOMATION_STATE_CHANGED"; state: TabAutomationState }
   | { type: "FRAME_TASK_STATE"; state: DetectedTaskState; message: string; questionSummary?: QuestionPageSummary; answerStats?: AnswerRunStats }
   | { type: "PAGE_TASK_STATE"; state: DetectedTaskState; message: string; frameId: number; questionSummary?: QuestionPageSummary; answerStats?: AnswerRunStats }
