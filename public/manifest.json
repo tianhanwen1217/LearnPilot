@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LearnPilot",
-  "version": "0.4.14",
+  "version": "0.4.15",
   "description": "连续播放、资料检索与授权课程测试辅助。",
   "permissions": [
     "storage"
