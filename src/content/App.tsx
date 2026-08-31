@@ -137,7 +137,7 @@ export function App() {
     setAutoAnswer(false);
     const current = await loadCourseState(courseId);
     await saveCourseState({ ...current, autoRunning: false });
-    await chrome.runtime.sendMessage({ type: "SET_TAB_AUTOMATION", state: { autoAnswer: false, paused: assistantPausedRef.current } } satisfies RuntimeMessage).catch(() => undefined);
+    await chrome.runtime.sendMessage({ type: "SET_TAB_AUTOMATION", state: { autoAnswer: false, paused: assistantPausedRef.current, answerFrameId: answerFrameIdRef.current ?? undefined } } satisfies RuntimeMessage).catch(() => undefined);
     setStatus(message);
   }, [courseId]);
 
@@ -264,6 +264,10 @@ export function App() {
         setStatus(`已勾选 ${analyzed.result.suggestedOptions.join("、")}；已答完 ${answerStatsRef.current.answered}，存疑 ${answerStatsRef.current.skipped}`);
         if (!await advanceOrFinish(analyzed.question, settings)) return;
       }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (autoRef.current) await stopAuto(`自动答题异常：${message}；已停止`).catch(() => undefined);
+      else setStatus(`题目处理异常：${message}`);
     } finally {
       autoLoopRef.current = false;
     }
@@ -277,13 +281,16 @@ export function App() {
     autoRef.current = true;
     pausedReasonRef.current = "";
     processedQuestionIdsRef.current = new Set();
-    answerFrameIdRef.current = null;
+    const recentQuestionFrame = remoteTaskRef.current?.state === "question" && Date.now() - remoteTaskRef.current.receivedAt < 6000
+      ? remoteTaskRef.current.frameId
+      : 0;
+    answerFrameIdRef.current = recentQuestionFrame;
     updateAnswerStats(emptyAnswerRunStats());
-    focusFirstUnansweredQuestion(processedQuestionIdsRef.current);
+    if (recentQuestionFrame === 0) focusFirstUnansweredQuestion(processedQuestionIdsRef.current);
     setAutoAnswer(true);
     const current = await loadCourseState(courseId);
     await saveCourseState({ ...current, testMode: true, autoRunning: true });
-    await chrome.runtime.sendMessage({ type: "SET_TAB_AUTOMATION", state: { autoAnswer: true, paused: assistantPausedRef.current } } satisfies RuntimeMessage);
+    await chrome.runtime.sendMessage({ type: "SET_TAB_AUTOMATION", state: { autoAnswer: true, paused: assistantPausedRef.current, answerFrameId: recentQuestionFrame } } satisfies RuntimeMessage);
     setStatus("自动答题已开启");
   }, [courseId, stopAuto, updateAnswerStats]);
 
@@ -299,6 +306,7 @@ export function App() {
       setJumpMode(mode);
       setPlaybackRateState(settings.playbackRate);
       const automation = automationResponse.ok && automationResponse.data ? automationResponse.data : { autoAnswer: state.testMode && state.autoRunning, paused: false };
+      answerFrameIdRef.current = automation.answerFrameId ?? null;
       const enabled = automation.autoAnswer;
       autoRef.current = enabled;
       setAutoAnswer(enabled);
@@ -316,6 +324,7 @@ export function App() {
       if (message.type === "PLAYBACK_RATE_CHANGED") setPlaybackRateState(message.rate);
       if (message.type === "PLAYBACK_PROGRESS") videoSignalRef.current = { progress: message.progress, receivedAt: Date.now() };
       if (message.type === "AUTOMATION_STATE_CHANGED") {
+        answerFrameIdRef.current = message.state.answerFrameId ?? answerFrameIdRef.current;
         autoRef.current = message.state.autoAnswer;
         setAutoAnswer(message.state.autoAnswer);
         assistantPausedRef.current = message.state.paused;
@@ -443,6 +452,9 @@ export function App() {
           return;
         }
         setStatus("未识别到任务；请打开视频、文本或作业页");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setStatus(`页面状态检测异常：${message}`);
       } finally {
         inspecting = false;
       }
@@ -537,7 +549,7 @@ export function App() {
     setAssistantPaused(next);
     setBusy(true);
     try {
-      const response = await chrome.runtime.sendMessage({ type: "SET_TAB_AUTOMATION", state: { autoAnswer: autoRef.current, paused: next } } satisfies RuntimeMessage) as MessageResponse<TabAutomationState>;
+      const response = await chrome.runtime.sendMessage({ type: "SET_TAB_AUTOMATION", state: { autoAnswer: autoRef.current, paused: next, answerFrameId: answerFrameIdRef.current ?? undefined } } satisfies RuntimeMessage) as MessageResponse<TabAutomationState>;
       if (!response.ok) throw new Error(response.error || "无法切换助手状态");
       setStatus(next ? "助手已暂停" : "助手已继续，正在识别课程内容…");
     } catch (error) {
@@ -751,7 +763,7 @@ export function App() {
         return <span key={item.index} className={stateClass} title={`第 ${item.index} 题${stateLabel}`}>{item.index}</span>;
       })}</div></section></div>
       <button type="button" className={`question-start${autoAnswer ? " running" : ""}`} disabled={busy} onClick={() => void updateAutoAnswer(!autoAnswer)}>{busy ? "正在处理…" : autoAnswer ? "停止答题" : "开始答题"}</button>
-      {(answerStats.processed > 0 || answerStats.skipped > 0) && <div className="answer-stats"><span>已处理 {answerStats.processed}/{totalQuestions}</span><b>已答完 {answerStats.answered}</b><em>存疑 {answerStats.skipped}</em></div>}
+      {(completedQuestions > 0 || answerStats.processed > 0) && <div className="answer-stats"><span>已处理 {completedQuestions}/{totalQuestions}</span><b>已答完 {answeredQuestions}</b><em>存疑 {doubtfulQuestions}</em></div>}
       <p className={`question-live-status${/失败|错误|未识别|没有|无法|低于|请先|已停止/.test(status) ? " error" : ""}`}>{status}</p>
       {!autoAnswer && answerStats.failures.length > 0 && <details className="answer-report"><summary>查看存疑题目明细</summary><ul>{answerStats.failures.slice(0, 12).map((failure) => <li key={failure.questionId}>{failure.index ? `第 ${failure.index} 题：` : ""}{failure.reason}</li>)}</ul>{answerStats.failures.length > 12 && <small>另有 {answerStats.failures.length - 12} 题标记为存疑</small>}</details>}
       <p className="question-note">按置信度自动勾选并进入下一题，最终提交仍由你点击。</p>

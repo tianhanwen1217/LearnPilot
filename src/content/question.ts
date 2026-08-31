@@ -157,7 +157,7 @@ function questionDomFromContainer(container: HTMLElement): QuestionDom | null {
 
 function containerAnswered(container: HTMLElement): boolean {
   if (container.querySelector("input[type=radio]:checked, input[type=checkbox]:checked")) return true;
-  if (container.querySelector(".num_option.check_answer, .check_answer, [aria-checked='true'], .answerBg.selected, .answerBg.checked, .option.selected, .option.checked")) return true;
+  if (container.querySelector(".num_option.check_answer, .answerBg.check_answer, [aria-checked='true'], .answerBg.selected, .answerBg.checked, .option.selected, .option.checked")) return true;
   if ([...container.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("textarea, input:not([type]), input[type=text]")].some((input) => input.value.trim())) return true;
   return /(?:answered|finished|completed|has-answer|is-done)/i.test(container.className.toString());
 }

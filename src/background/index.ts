@@ -114,7 +114,7 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
         case "GET_TAB_AUTOMATION": {
           const tabId = sender.tab?.id;
           if (tabId == null) throw new Error("无法识别当前标签页。");
-          sendResponse({ ok: true, data: await getTabAutomation(tabId) });
+          sendResponse({ ok: true, data: { ...await getTabAutomation(tabId), viewerFrameId: sender.frameId ?? 0 } });
           return;
         }
         case "SET_TAB_AUTOMATION": {

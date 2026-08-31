@@ -78,7 +78,9 @@ export function advanceTextTask(): "scrolled" | "bottom" | "missing" {
 
 let framePlaybackEnabled = false;
 let frameAutomation: TabAutomationState = { autoAnswer: false, paused: false };
+let frameSelfId: number | undefined = typeof window !== "undefined" && window.top === window ? 0 : undefined;
 let frameMonitorTimer: number | null = null;
+let frameInspectBusy = false;
 let frameQuestionBusy = false;
 let lastFrameState = "";
 let lastFrameReportAt = 0;
@@ -86,6 +88,16 @@ let lastFrameTextScrollAt = 0;
 let lastFrameSyncAt = 0;
 let frameAnswerStats = emptyAnswerRunStats();
 let frameProcessedQuestionIds = new Set<string>();
+
+export function automationForFrame(state: TabAutomationState, frameId?: number): TabAutomationState {
+  const ownsAnswers = state.answerFrameId == null ? frameId === 0 : state.answerFrameId === frameId;
+  return { ...state, autoAnswer: state.autoAnswer && ownsAnswers };
+}
+
+function adoptFrameAutomation(state: TabAutomationState): TabAutomationState {
+  if (state.viewerFrameId != null) frameSelfId = state.viewerFrameId;
+  return automationForFrame(state, frameSelfId);
+}
 
 async function syncFrameControls(): Promise<void> {
   const now = Date.now();
@@ -97,12 +109,13 @@ async function syncFrameControls(): Promise<void> {
   ]);
   if (playback?.ok && typeof playback.data === "boolean") framePlaybackEnabled = playback.data;
   if (automation?.ok && automation.data) {
-    if (!frameAutomation.autoAnswer && automation.data.autoAnswer) {
+    const scopedAutomation = adoptFrameAutomation(automation.data);
+    if (!frameAutomation.autoAnswer && scopedAutomation.autoAnswer) {
       frameAnswerStats = emptyAnswerRunStats();
       frameProcessedQuestionIds = new Set();
       focusFirstUnansweredQuestion(frameProcessedQuestionIds);
     }
-    frameAutomation = automation.data;
+    frameAutomation = scopedAutomation;
   }
 }
 
@@ -170,6 +183,9 @@ async function processFrameQuestion(): Promise<void> {
     if (frameAutomation.paused || !frameAutomation.autoAnswer) return;
     if (pageHasBlockingPrompt()) return void await stopFrameAuto("检测到签到、登录或验证，已暂停");
     if (!clickNextQuestion(frameProcessedQuestionIds)) return void await stopFrameAuto(answerRunSummary(frameAnswerStats, inspectQuestionPage()?.total));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await stopFrameAuto(`自动答题异常：${message}；已停止`).catch(() => undefined);
   } finally {
     frameQuestionBusy = false;
   }
@@ -213,12 +229,26 @@ async function inspectFrameTask(): Promise<void> {
   }
 }
 
+async function safelyInspectFrameTask(): Promise<void> {
+  if (frameInspectBusy) return;
+  frameInspectBusy = true;
+  try {
+    await inspectFrameTask();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (frameAutomation.autoAnswer) await stopFrameAuto(`页面监控异常：${message}；已停止`).catch(() => undefined);
+    else reportFrameState("idle", `页面监控异常：${message}`, true);
+  } finally {
+    frameInspectBusy = false;
+  }
+}
+
 export function startFrameTaskMonitor(playbackEnabled: boolean, automation: TabAutomationState): void {
   framePlaybackEnabled = playbackEnabled;
-  frameAutomation = automation;
+  frameAutomation = adoptFrameAutomation(automation);
   if (frameMonitorTimer != null) return;
-  void inspectFrameTask();
-  frameMonitorTimer = window.setInterval(() => void inspectFrameTask(), 1000);
+  void safelyInspectFrameTask();
+  frameMonitorTimer = window.setInterval(() => void safelyInspectFrameTask(), 1000);
 }
 
 export function setFramePlaybackState(enabled: boolean): void {
@@ -226,11 +256,12 @@ export function setFramePlaybackState(enabled: boolean): void {
 }
 
 export function setFrameAutomationState(state: TabAutomationState): void {
-  if (!frameAutomation.autoAnswer && state.autoAnswer) {
+  const scopedAutomation = adoptFrameAutomation(state);
+  if (!frameAutomation.autoAnswer && scopedAutomation.autoAnswer) {
     frameAnswerStats = emptyAnswerRunStats();
     frameProcessedQuestionIds = new Set();
     focusFirstUnansweredQuestion(frameProcessedQuestionIds);
   }
-  frameAutomation = state;
-  void inspectFrameTask();
+  frameAutomation = scopedAutomation;
+  void safelyInspectFrameTask();
 }

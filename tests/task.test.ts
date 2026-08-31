@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isLikelyCoursePage, selectPageTask } from "../src/content/task";
+import { automationForFrame, isLikelyCoursePage, selectPageTask } from "../src/content/task";
 
 describe("automatic page task selection", () => {
   const empty = { blocked: false, question: false, completed: false, text: false };
@@ -24,5 +24,14 @@ describe("automatic page task selection", () => {
   it("limits passive text automation to course-like pages", () => {
     expect(isLikelyCoursePage("https://mooc.example.com/course/123/learn")).toBe(true);
     expect(isLikelyCoursePage("https://example.com/news/today")).toBe(false);
+  });
+
+  it("allows only the selected frame to run question automation", () => {
+    const state = { autoAnswer: true, paused: false, answerFrameId: 17 };
+    expect(automationForFrame(state, 17).autoAnswer).toBe(true);
+    expect(automationForFrame(state, 2).autoAnswer).toBe(false);
+    expect(automationForFrame(state, undefined).autoAnswer).toBe(false);
+    expect(automationForFrame({ autoAnswer: true, paused: false }, 0).autoAnswer).toBe(true);
+    expect(automationForFrame({ autoAnswer: true, paused: false }, 3).autoAnswer).toBe(false);
   });
 });

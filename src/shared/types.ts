@@ -124,6 +124,8 @@ export type DetectedTaskState = "blocked" | "question" | "video_playing" | "vide
 export interface TabAutomationState {
   autoAnswer: boolean;
   paused: boolean;
+  answerFrameId?: number;
+  viewerFrameId?: number;
 }
 
 export type RuntimeMessage =

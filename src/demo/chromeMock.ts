@@ -75,7 +75,7 @@ export function installDemoChrome(): DemoBridge {
   });
 
   const bridge: DemoBridge = {
-    emitTask(state, message) { emit({ type: "PAGE_TASK_STATE", state, message, frameId: 1 }); },
+    emitTask(state, message) { emit({ type: "PAGE_TASK_STATE", state, message, frameId: 0 }); },
     openPanel() { emit({ type: "TOGGLE_PANEL" }); },
     reset() {
       playback = false;
