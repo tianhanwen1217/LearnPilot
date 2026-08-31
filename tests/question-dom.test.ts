@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { applySuggestedOptions, clickNextQuestion, extractNextUnprocessedQuestion } from "../src/content/question";
+import { applySuggestedOptions, clickNextQuestion, extractNextUnprocessedQuestion, uniqueQuestionSequence } from "../src/content/question";
 import type { AnalysisResult } from "../src/shared/types";
 
 const answer: AnalysisResult = {
@@ -66,5 +66,34 @@ describe("strict multi-question DOM queue", () => {
     expect(clickNextQuestion(new Set([first!.question.id]))).toBe(true);
     expect(globalClick).not.toHaveBeenCalled();
     expect(extractNextUnprocessedQuestion(new Set([first!.question.id]))?.question.pageIndex).toBe(2);
+  });
+
+  it("deduplicates numbered wrappers and unnumbered inner copies", () => {
+    const base = extractNextUnprocessedQuestion(new Set())!.question;
+    const second = extractNextUnprocessedQuestion(new Set([base.id]))!.question;
+    const innerCopy = { ...base, id: `${base.id}-inner`, pageIndex: undefined };
+    expect(uniqueQuestionSequence([
+      { question: innerCopy },
+      { question: second },
+      { question: base },
+    ]).map((item) => item.question.pageIndex)).toEqual([1, 2]);
+  });
+
+  it("accepts a stable custom visual state change as a successful selection", async () => {
+    document.body.innerHTML = `<article class="singleQuesId" id="custom-question">
+      <div>1.（单选题）</div>
+      <div class="TiMu">
+        <div class="Zy_TItle">自定义选中样式</div>
+        <div class="answerBg" data-option="A"><span class="num_option">A</span><span class="answer_p">选项 A</span></div>
+        <div class="answerBg" data-option="B"><span class="num_option">B</span><span class="answer_p">选项 B</span></div>
+      </div>
+    </article>`;
+    document.querySelector("[data-option='B']")!.addEventListener("click", (event) => {
+      (event.currentTarget as HTMLElement).classList.add("platform-blue-state");
+    });
+    const current = extractNextUnprocessedQuestion(new Set())!;
+    const result = await applySuggestedOptions(answer, current.question.id);
+    expect(result).toEqual({ applied: 1, missing: [] });
+    expect(document.querySelector("[data-option='B']")?.classList.contains("platform-blue-state")).toBe(true);
   });
 });

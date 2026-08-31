@@ -217,11 +217,26 @@ function questionDomFromContainer(container: HTMLElement): QuestionDom | null {
   };
 }
 
+export function uniqueQuestionSequence<T extends { question: ExtractedQuestion }>(items: T[]): T[] {
+  const seenIndexes = new Set<number>();
+  const seenContent = new Set<string>();
+  const result: T[] = [];
+  for (const item of [...items].sort((a, b) => (a.question.pageIndex ?? Number.MAX_SAFE_INTEGER) - (b.question.pageIndex ?? Number.MAX_SAFE_INTEGER))) {
+    const index = item.question.pageIndex;
+    const content = stableId(`${item.question.stem}\n${item.question.options.map((option) => `${option.key}:${option.text}`).join("\n")}`);
+    if (index != null && seenIndexes.has(index)) continue;
+    if (index == null && seenContent.has(content)) continue;
+    if (index != null) seenIndexes.add(index);
+    seenContent.add(content);
+    result.push(item);
+  }
+  return result;
+}
+
 function orderedQuestionDoms(): QuestionDom[] {
-  return candidateContainers()
+  return uniqueQuestionSequence(candidateContainers()
     .map((container) => questionDomFromContainer(container))
-    .filter((item): item is QuestionDom => Boolean(item))
-    .sort((a, b) => (a.question.pageIndex ?? Number.MAX_SAFE_INTEGER) - (b.question.pageIndex ?? Number.MAX_SAFE_INTEGER));
+    .filter((item): item is QuestionDom => Boolean(item)));
 }
 
 function questionDomById(questionId: string): QuestionDom | null {
@@ -253,17 +268,16 @@ export function summarizeQuestionItems(items: QuestionPageItem[], hintedTotal = 
 }
 
 export function inspectQuestionPage(): QuestionPageSummary | null {
-  const containers = candidateContainers();
-  if (!containers.length) return null;
+  const questions = orderedQuestionDoms();
+  if (!questions.length) return null;
   const currentContainer = chooseContainer();
-  const items = containers.slice(0, 120).map((container, offset): QuestionPageItem => {
-    const parsed = questionDomFromContainer(container);
+  const items = questions.slice(0, 120).map((parsed, offset): QuestionPageItem => {
     return {
-      id: parsed?.question.id,
-      index: questionIndexFromContainer(container) ?? offset + 1,
-      type: parsed?.question.type ?? "unknown",
-      answered: containerAnswered(container),
-      current: container === currentContainer || /(?:active|current|\bcur\b)/i.test(container.className.toString()),
+      id: parsed.question.id,
+      index: parsed.question.pageIndex ?? offset + 1,
+      type: parsed.question.type,
+      answered: containerAnswered(parsed.container),
+      current: parsed.container === currentContainer || /(?:active|current|\bcur\b)/i.test(parsed.container.className.toString()),
     };
   });
   const pageText = cleanVisibleText(document.body.innerText);
@@ -352,12 +366,22 @@ function optionIsSelected(element: HTMLElement): boolean {
     || Boolean(element.querySelector("[aria-checked='true'], [aria-selected='true'], [data-checked='true'], .num_option.check_answer, .answerBg.check_answer, .selected, .checked, .is-checked"));
 }
 
+function optionStateFingerprint(element: HTMLElement): string {
+  return [element, ...element.querySelectorAll<HTMLElement>("*")].slice(0, 80).map((node) => {
+    const input = node instanceof HTMLInputElement ? `${node.checked}:${node.value}` : "";
+    return `${node.tagName}|${node.className}|${node.getAttribute("style") ?? ""}|${node.getAttribute("aria-checked") ?? ""}|${node.getAttribute("aria-selected") ?? ""}|${node.getAttribute("data-checked") ?? ""}|${input}`;
+  }).join("\n");
+}
+
 async function clickAndVerifyOption(questionId: string, key: string, element: HTMLElement): Promise<boolean> {
   if (optionIsSelected(element)) return true;
+  const before = optionStateFingerprint(element);
   const input = element.matches("input") ? element as HTMLInputElement : element.querySelector<HTMLInputElement>("input[type=radio], input[type=checkbox]");
   const target = input ?? element.querySelector<HTMLElement>("label, .option-content, .answer_p, [class*='content']") ?? element;
   target.click();
   const started = Date.now();
+  let changedState = "";
+  let stableChanges = 0;
   while (Date.now() - started < 700) {
     await new Promise((resolve) => window.setTimeout(resolve, 60));
     if (element.isConnected && optionIsSelected(element)) return true;
@@ -366,6 +390,14 @@ async function clickAndVerifyOption(questionId: string, key: string, element: HT
     const index = current?.question.options.findIndex((option) => option.key === key) ?? -1;
     const currentElement = index >= 0 ? current?.optionElements[index] : undefined;
     if (currentElement && optionIsSelected(currentElement)) return true;
+    if (currentElement) {
+      const after = optionStateFingerprint(currentElement);
+      if (after !== before) {
+        stableChanges = after === changedState ? stableChanges + 1 : 1;
+        changedState = after;
+        if (stableChanges >= 2) return true;
+      }
+    }
   }
   return false;
 }

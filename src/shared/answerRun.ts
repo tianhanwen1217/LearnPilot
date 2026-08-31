@@ -6,6 +6,10 @@ export function emptyAnswerRunStats(): AnswerRunStats {
   return { answered: 0, skipped: 0, processed: 0, answeredQuestionIds: [], answeredQuestionIndexes: [], failures: [] };
 }
 
+export function shouldResumeAnswerRun(stats: AnswerRunStats, total?: number): boolean {
+  return stats.processed > 0 && (!total || stats.processed < total);
+}
+
 export function setCurrentQuestion(stats: AnswerRunStats, questionId: string, index?: number): AnswerRunStats {
   return { ...stats, currentQuestionId: questionId, currentQuestionIndex: index };
 }

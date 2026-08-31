@@ -1,6 +1,6 @@
 import { normalizeText } from "../shared/text";
 import { effectiveConfidenceThreshold } from "../shared/confidence";
-import { answerRunSummary, emptyAnswerRunStats, isSystemicAnalysisError, recordAnswered, recordSkipped, setCurrentQuestion } from "../shared/answerRun";
+import { answerRunSummary, emptyAnswerRunStats, isSystemicAnalysisError, recordAnswered, recordSkipped, setCurrentQuestion, shouldResumeAnswerRun } from "../shared/answerRun";
 import { getSettings } from "../shared/storage";
 import type { AnalysisResult, AnswerRunStats, DetectedTaskState, MessageResponse, QuestionPageSummary, RuntimeMessage, TabAutomationState, VideoProgress } from "../shared/types";
 import { applySuggestedOptions, clickNextQuestion, extractNextUnprocessedQuestion, focusFirstUnansweredQuestion, inspectQuestionPage } from "./question";
@@ -89,6 +89,15 @@ let lastFrameSyncAt = 0;
 let frameAnswerStats = emptyAnswerRunStats();
 let frameProcessedQuestionIds = new Set<string>();
 
+function prepareFrameAnswerRunForStart(): void {
+  const total = inspectQuestionPage()?.total;
+  if (!shouldResumeAnswerRun(frameAnswerStats, total)) {
+    frameAnswerStats = emptyAnswerRunStats();
+    frameProcessedQuestionIds = new Set();
+  }
+  focusFirstUnansweredQuestion(frameProcessedQuestionIds);
+}
+
 export function automationForFrame(state: TabAutomationState, frameId?: number): TabAutomationState {
   const ownsAnswers = state.answerFrameId == null ? frameId === 0 : state.answerFrameId === frameId;
   return { ...state, autoAnswer: state.autoAnswer && ownsAnswers };
@@ -111,9 +120,7 @@ async function syncFrameControls(): Promise<void> {
   if (automation?.ok && automation.data) {
     const scopedAutomation = adoptFrameAutomation(automation.data);
     if (!frameAutomation.autoAnswer && scopedAutomation.autoAnswer) {
-      frameAnswerStats = emptyAnswerRunStats();
-      frameProcessedQuestionIds = new Set();
-      focusFirstUnansweredQuestion(frameProcessedQuestionIds);
+      prepareFrameAnswerRunForStart();
     }
     frameAutomation = scopedAutomation;
   }
@@ -257,9 +264,7 @@ export function setFramePlaybackState(enabled: boolean): void {
 export function setFrameAutomationState(state: TabAutomationState): void {
   const scopedAutomation = adoptFrameAutomation(state);
   if (!frameAutomation.autoAnswer && scopedAutomation.autoAnswer) {
-    frameAnswerStats = emptyAnswerRunStats();
-    frameProcessedQuestionIds = new Set();
-    focusFirstUnansweredQuestion(frameProcessedQuestionIds);
+    prepareFrameAnswerRunForStart();
   }
   frameAutomation = scopedAutomation;
   void safelyInspectFrameTask();

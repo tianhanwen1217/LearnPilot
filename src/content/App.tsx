@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { answerRunSummary, emptyAnswerRunStats, isSystemicAnalysisError, questionRunStatus, recordAnswered, recordSkipped, setCurrentQuestion } from "../shared/answerRun";
+import { answerRunSummary, emptyAnswerRunStats, isSystemicAnalysisError, questionRunStatus, recordAnswered, recordSkipped, setCurrentQuestion, shouldResumeAnswerRun } from "../shared/answerRun";
 import { courseSessionKey } from "../shared/defaults";
 import { effectiveConfidenceThreshold } from "../shared/confidence";
 import { applyProviderPreset, detectApiProvider } from "../shared/providers";
@@ -278,20 +278,22 @@ export function App() {
       await stopAuto();
       return;
     }
+    const detectedTotal = remoteTaskRef.current?.questionSummary?.total ?? inspectQuestionPage()?.total;
+    const resuming = shouldResumeAnswerRun(answerStatsRef.current, detectedTotal);
     autoRef.current = true;
     pausedReasonRef.current = "";
-    processedQuestionIdsRef.current = new Set();
+    if (!resuming) processedQuestionIdsRef.current = new Set();
     const recentQuestionFrame = remoteTaskRef.current?.state === "question" && Date.now() - remoteTaskRef.current.receivedAt < 6000
       ? remoteTaskRef.current.frameId
       : 0;
     answerFrameIdRef.current = recentQuestionFrame;
-    updateAnswerStats(emptyAnswerRunStats());
+    if (!resuming) updateAnswerStats(emptyAnswerRunStats());
     if (recentQuestionFrame === 0) focusFirstUnansweredQuestion(processedQuestionIdsRef.current);
     setAutoAnswer(true);
     const current = await loadCourseState(courseId);
     await saveCourseState({ ...current, testMode: true, autoRunning: true });
     await chrome.runtime.sendMessage({ type: "SET_TAB_AUTOMATION", state: { autoAnswer: true, paused: assistantPausedRef.current, answerFrameId: recentQuestionFrame } } satisfies RuntimeMessage);
-    setStatus("自动答题已开启");
+    setStatus(resuming ? `继续自动答题，已处理 ${answerStatsRef.current.processed}/${detectedTotal ?? "?"}` : "自动答题已开启");
   }, [courseId, stopAuto, updateAnswerStats]);
 
   useEffect(() => {
@@ -783,7 +785,7 @@ export function App() {
         const stateLabel = state === "doubtful" ? " · 存疑" : state === "answered" ? " · 已答完" : state === "processing" ? " · 正在处理" : " · 待答";
         return <span key={item.index} className={stateClass} title={`第 ${item.index} 题${stateLabel}`}>{item.index}</span>;
       })}</div></section></div>
-      <button type="button" className={`question-start${autoAnswer ? " running" : ""}`} disabled={busy} onClick={() => void updateAutoAnswer(!autoAnswer)}>{busy ? "正在处理…" : autoAnswer ? "停止答题" : "开始答题"}</button>
+      <button type="button" className={`question-start${autoAnswer ? " running" : ""}`} disabled={busy} onClick={() => void updateAutoAnswer(!autoAnswer)}>{busy ? "正在处理…" : autoAnswer ? "停止答题" : shouldResumeAnswerRun(answerStats, totalQuestions) ? "继续答题" : "开始答题"}</button>
       {(completedQuestions > 0 || answerStats.processed > 0) && <div className="answer-stats"><span>已处理 {completedQuestions}/{totalQuestions}</span><b>已答完 {answeredQuestions}</b><em>存疑 {doubtfulQuestions}</em></div>}
       <p className={`question-live-status${/失败|错误|未识别|没有|无法|低于|请先|已停止/.test(status) ? " error" : ""}`}>{status}</p>
       {!autoAnswer && answerStats.failures.length > 0 && <details className="answer-report"><summary>查看存疑题目明细</summary><ul>{answerStats.failures.slice(0, 12).map((failure) => <li key={failure.questionId}>{failure.index ? `第 ${failure.index} 题：` : ""}{failure.reason}</li>)}</ul>{answerStats.failures.length > 12 && <small>另有 {answerStats.failures.length - 12} 题标记为存疑</small>}</details>}

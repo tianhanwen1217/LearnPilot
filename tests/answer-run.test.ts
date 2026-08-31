@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { answerRunSummary, emptyAnswerRunStats, isSystemicAnalysisError, questionRunStatus, recordAnswered, recordSkipped, setCurrentQuestion } from "../src/shared/answerRun";
+import { answerRunSummary, emptyAnswerRunStats, isSystemicAnalysisError, questionRunStatus, recordAnswered, recordSkipped, setCurrentQuestion, shouldResumeAnswerRun } from "../src/shared/answerRun";
 
 describe("fault-tolerant answer run", () => {
+  it("resumes a partial run but resets a completed run", () => {
+    const partial = recordAnswered(emptyAnswerRunStats(), "q1", 1);
+    expect(shouldResumeAnswerRun(partial, 3)).toBe(true);
+    expect(shouldResumeAnswerRun(partial, 1)).toBe(false);
+    expect(shouldResumeAnswerRun(emptyAnswerRunStats(), 3)).toBe(false);
+  });
+
   it("records per-question failures without ending the run", () => {
     let stats = recordSkipped(emptyAnswerRunStats(), "q1", "置信度不足", 1);
     stats = setCurrentQuestion(stats, "q2", 2);
