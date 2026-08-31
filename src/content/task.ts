@@ -149,7 +149,7 @@ async function processFrameQuestion(): Promise<void> {
   frameQuestionBusy = true;
   try {
     const settings = await getSettings();
-    const currentIndex = inspectQuestionPage()?.currentIndex;
+    const currentIndex = extracted.question.pageIndex ?? inspectQuestionPage()?.currentIndex;
     const skipAndContinue = async (reason: string) => {
       frameProcessedQuestionIds.add(extracted.question.id);
       frameAnswerStats = recordSkipped(frameAnswerStats, extracted.question.id, reason, currentIndex);
@@ -173,7 +173,7 @@ async function processFrameQuestion(): Promise<void> {
     if (!response.data.suggestedOptions.length) return void await skipAndContinue(extracted.question.options.length
       ? "模型没有返回可勾选的选项"
       : "没有识别到可勾选的选项；当前页面可能是填空/简答题或选项结构尚未适配");
-    const applied = applySuggestedOptions(response.data);
+    const applied = await applySuggestedOptions(response.data);
     if (!applied.applied || applied.missing.length) return void await skipAndContinue(`答案为 ${response.data.suggestedOptions.join("、")}，但页面选项匹配失败${applied.missing.length ? `（缺少 ${applied.missing.join("、")}）` : ""}`);
     frameProcessedQuestionIds.add(extracted.question.id);
     frameAnswerStats = recordAnswered(frameAnswerStats, extracted.question.id, currentIndex);

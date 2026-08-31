@@ -193,7 +193,7 @@ export function App() {
 
       const skipAndContinue = async (question: ExtractedQuestion, reason: string, settings: Awaited<ReturnType<typeof getSettings>>): Promise<boolean> => {
         processedQuestionIdsRef.current.add(question.id);
-        const index = inspectQuestionPage()?.currentIndex;
+        const index = question.pageIndex ?? inspectQuestionPage()?.currentIndex;
         const stats = recordSkipped(answerStatsRef.current, question.id, reason, index);
         updateAnswerStats(stats);
         setStatus(`${index ? `第 ${index} 题` : "当前题"}标记存疑：${reason}；继续下一题`);
@@ -223,7 +223,7 @@ export function App() {
           if (!clickNextQuestion(processedQuestionIdsRef.current)) await stopAuto(answerRunSummary(answerStatsRef.current, inspectQuestionPage()?.total));
           continue;
         }
-        const currentIndex = inspectQuestionPage()?.currentIndex;
+        const currentIndex = currentQuestion.question.pageIndex ?? inspectQuestionPage()?.currentIndex;
         updateAnswerStats(setCurrentQuestion(answerStatsRef.current, currentQuestion.question.id, currentIndex));
         const analyzed = await analyzeCurrentQuestion();
         if (!autoRef.current || assistantPausedRef.current) return;
@@ -255,7 +255,7 @@ export function App() {
           if (!await skipAndContinue(analyzed.question, reason.replace("；已停止", ""), settings)) return;
           continue;
         }
-        const applied = applySuggestedOptions(analyzed.result);
+        const applied = await applySuggestedOptions(analyzed.result);
         if (!applied.applied || applied.missing.length) {
           const reason = `答案为 ${analyzed.result.suggestedOptions.join("、")}，但页面选项匹配失败${applied.missing.length ? `（缺少 ${applied.missing.join("、")}）` : ""}`;
           if (!await skipAndContinue(analyzed.question, reason, settings)) return;

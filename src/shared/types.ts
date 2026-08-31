@@ -8,6 +8,7 @@ export interface QuestionOption {
 
 export interface ExtractedQuestion {
   id: string;
+  pageIndex?: number;
   type: QuestionType;
   stem: string;
   options: QuestionOption[];

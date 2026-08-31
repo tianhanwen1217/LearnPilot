@@ -190,6 +190,7 @@ function questionDomFromContainer(container: HTMLElement): QuestionDom | null {
       id: explicitId
         ? `dom:${explicitId}:${stableId(stem + options.map((item) => item.text).join(""))}`
         : stableId(stem + options.map((item) => item.text).join("")),
+      pageIndex: questionIndexFromContainer(container),
       type: inferQuestionType(stem, options.length),
       stem,
       options,
@@ -310,14 +311,32 @@ export function extractCurrentQuestion(preferSelection = true): QuestionDom | nu
   return questionDomFromContainer(container);
 }
 
-function clickOption(element: HTMLElement): void {
+function optionIsSelected(element: HTMLElement): boolean {
   const input = element.matches("input") ? element as HTMLInputElement : element.querySelector<HTMLInputElement>("input[type=radio], input[type=checkbox]");
-  if (input?.checked) return;
-  const target = element.querySelector<HTMLElement>("label, .option-content, .answer_p, [class*='content']") ?? input ?? element;
-  target.click();
+  if (input?.checked) return true;
+  return element.matches("[aria-checked='true'], [aria-selected='true'], [data-checked='true'], .selected, .checked, .is-checked, .answerBg.check_answer")
+    || Boolean(element.querySelector("[aria-checked='true'], [aria-selected='true'], [data-checked='true'], .num_option.check_answer, .answerBg.check_answer, .selected, .checked, .is-checked"));
 }
 
-export function applySuggestedOptions(result: AnalysisResult): { applied: number; missing: string[] } {
+async function clickAndVerifyOption(questionId: string, key: string, element: HTMLElement): Promise<boolean> {
+  if (optionIsSelected(element)) return true;
+  const input = element.matches("input") ? element as HTMLInputElement : element.querySelector<HTMLInputElement>("input[type=radio], input[type=checkbox]");
+  const target = input ?? element.querySelector<HTMLElement>("label, .option-content, .answer_p, [class*='content']") ?? element;
+  target.click();
+  const started = Date.now();
+  while (Date.now() - started < 700) {
+    await new Promise((resolve) => window.setTimeout(resolve, 60));
+    if (element.isConnected && optionIsSelected(element)) return true;
+    const current = extractCurrentQuestion(false);
+    if (!current || current.question.id !== questionId) continue;
+    const index = current?.question.options.findIndex((option) => option.key === key) ?? -1;
+    const currentElement = index >= 0 ? current?.optionElements[index] : undefined;
+    if (currentElement && optionIsSelected(currentElement)) return true;
+  }
+  return false;
+}
+
+export async function applySuggestedOptions(result: AnalysisResult): Promise<{ applied: number; missing: string[] }> {
   const current = extractCurrentQuestion(false);
   if (!current) return { applied: 0, missing: result.suggestedOptions };
   let applied = 0;
@@ -329,8 +348,8 @@ export function applySuggestedOptions(result: AnalysisResult): { applied: number
       missing.push(key);
       continue;
     }
-    clickOption(element);
-    applied += 1;
+    if (await clickAndVerifyOption(current.question.id, key, element)) applied += 1;
+    else missing.push(key);
   }
   return { applied, missing };
 }
