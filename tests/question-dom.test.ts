@@ -79,6 +79,17 @@ describe("strict multi-question DOM queue", () => {
     ]).map((item) => item.question.pageIndex)).toEqual([1, 2]);
   });
 
+  it("preserves every genuine numbered question in a 44-question paper", () => {
+    const base = extractNextUnprocessedQuestion(new Set())!.question;
+    const numbered = Array.from({ length: 44 }, (_, offset) => ({
+      question: { ...base, id: `q-${offset + 1}`, pageIndex: offset + 1 },
+    }));
+    const unnumberedInnerCopy = { question: { ...base, id: "q-1-inner", pageIndex: undefined } };
+    const unique = uniqueQuestionSequence([unnumberedInnerCopy, ...numbered]);
+    expect(unique).toHaveLength(44);
+    expect(unique.map((item) => item.question.pageIndex)).toEqual(Array.from({ length: 44 }, (_, offset) => offset + 1));
+  });
+
   it("accepts a stable custom visual state change as a successful selection", async () => {
     document.body.innerHTML = `<article class="singleQuesId" id="custom-question">
       <div>1.（单选题）</div>
